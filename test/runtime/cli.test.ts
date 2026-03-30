@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { isDirectCliInvocation, readCliArgs } from "../../lib/cli.js";
+import { formatCliError, isDirectCliInvocation, readCliArgs } from "../../lib/cli.js";
 
 test("readCliArgs parses key-value pairs and bare flags", () => {
   assert.deepEqual(readCliArgs(["--tab-ref", "main", "--submit"]), {
@@ -38,4 +38,12 @@ test("isDirectCliInvocation returns false when argv1 targets a different file", 
 
   assert.equal(isDirectCliInvocation(pathToFileURL(one).href, two), false);
   assert.equal(isDirectCliInvocation(pathToFileURL(one).href, undefined), false);
+});
+
+test("formatCliError prefers readable messages over stack traces", () => {
+  const error = new Error("human-friendly failure");
+  error.stack = "Error: human-friendly failure\n    at noisy-stack";
+
+  assert.equal(formatCliError(error), "human-friendly failure");
+  assert.equal(formatCliError("plain failure"), "plain failure");
 });

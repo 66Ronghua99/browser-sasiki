@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 
-import { isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
+import { formatCliError, isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
 import { defaultRuntimeRoots } from "../lib/paths.js";
 import { KnowledgeStore } from "../lib/knowledge-store.js";
 import { normalizePagePath } from "../lib/page-identity.js";
@@ -77,8 +77,7 @@ async function main(): Promise<void> {
 
 if (isDirectCliInvocation(import.meta.url, process.argv[1])) {
   void main().catch((error: unknown) => {
-    const message = error instanceof Error ? error.stack ?? error.message : String(error);
-    process.stderr.write(`${message}\n`);
+    process.stderr.write(`${formatCliError(error)}\n`);
     process.exitCode = 1;
   });
 }

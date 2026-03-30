@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
-import { isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
+import { formatCliError, isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
 import { optionalCliStringArg, requireCliStringArg } from "../lib/browser-action.js";
 import { defaultRuntimeRoots } from "../lib/paths.js";
 import { KnowledgeStore } from "../lib/knowledge-store.js";
@@ -17,6 +17,7 @@ export interface QuerySnapshotCliArgs {
   snapshotText?: string;
   text?: string;
   role?: string;
+  uid?: string;
   ref?: string;
   knowledgeFile?: string;
   origin?: string;
@@ -35,13 +36,25 @@ function requireValidMode(mode: string): QuerySnapshotCliArgs["mode"] {
 function requireSearchSelector(args: {
   text?: string;
   role?: string;
+  uid?: string;
   ref?: string;
 }): void {
-  if (args.text !== undefined || args.role !== undefined || args.ref !== undefined) {
+  if (args.text !== undefined || args.role !== undefined || args.uid !== undefined || args.ref !== undefined) {
     return;
   }
 
-  throw new Error("search mode requires at least one selector (--text, --query, --role, or --ref)");
+  throw new Error("search mode requires at least one selector (--text, --query, --role, --uid, or --ref)");
+}
+
+function resolveHandleSelector(uid: string | undefined, ref: string | undefined): { uid?: string; ref?: string } {
+  if (uid !== undefined && ref !== undefined && uid !== ref) {
+    throw new Error("--uid and --ref must match when both are provided");
+  }
+
+  return {
+    uid: uid ?? ref,
+    ref,
+  };
 }
 
 async function resolveSnapshotText(args: QuerySnapshotCliArgs): Promise<string> {
@@ -98,6 +111,7 @@ export function parseQuerySnapshotCliArgs(args: Record<string, string | boolean>
   const text = optionalCliStringArg(args, "text", "text");
   const query = optionalCliStringArg(args, "query", "query");
   const role = optionalCliStringArg(args, "role", "role");
+  const uid = optionalCliStringArg(args, "uid", "uid");
   const ref = optionalCliStringArg(args, "ref", "ref");
   const knowledgeFile = optionalCliStringArg(args, "knowledge-file", "knowledgeFile");
   const origin = optionalCliStringArg(args, "origin", "origin");
@@ -110,12 +124,14 @@ export function parseQuerySnapshotCliArgs(args: Record<string, string | boolean>
   }
 
   const selectorText = text ?? query;
+  const handleSelector = resolveHandleSelector(uid, ref);
   const mode = requireValidMode(modeValue);
   if (mode === "search") {
     requireSearchSelector({
       text: selectorText,
       role,
-      ref,
+      uid: handleSelector.uid,
+      ref: handleSelector.ref,
     });
   }
 
@@ -126,7 +142,8 @@ export function parseQuerySnapshotCliArgs(args: Record<string, string | boolean>
     snapshotText,
     text: selectorText,
     role,
-    ref,
+    uid: handleSelector.uid,
+    ref: handleSelector.ref,
     knowledgeFile,
     origin,
     path: normalizedPath,
@@ -145,6 +162,7 @@ export async function runQuerySnapshotCommand(args: QuerySnapshotCliArgs) {
     mode: args.mode,
     text: args.text,
     role: args.role,
+    uid: args.uid,
     ref: args.ref,
     knowledgeHits: knowledgeHits.map((record) => ({
       guide: record.guide,
@@ -163,8 +181,7 @@ async function main(): Promise<void> {
 
 if (isDirectCliInvocation(import.meta.url, process.argv[1])) {
   void main().catch((error: unknown) => {
-    const message = error instanceof Error ? error.stack ?? error.message : String(error);
-    process.stderr.write(`${message}\n`);
+    process.stderr.write(`${formatCliError(error)}\n`);
     process.exitCode = 1;
   });
 }

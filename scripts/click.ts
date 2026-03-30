@@ -1,6 +1,6 @@
 import process from "node:process";
 
-import { isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
+import { formatCliError, isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
 import {
   requireCliStringArg,
   runBrowserAction,
@@ -9,7 +9,7 @@ import {
 } from "../lib/browser-action.js";
 
 export async function runClickCommand(
-  args: { tabRef: string; ref: string },
+  args: { tabRef: string; uid: string },
   deps?: BrowserActionDeps,
 ) {
   return runWithBrowserActionDeps(deps, (resolvedDeps) =>
@@ -17,9 +17,9 @@ export async function runClickCommand(
       {
         action: "click",
         tabRef: args.tabRef,
-        toolName: "browser_click",
+        toolName: "click",
         toolArgs: {
-          ref: args.ref,
+          uid: args.uid,
         },
       },
       resolvedDeps,
@@ -29,11 +29,11 @@ export async function runClickCommand(
 
 export function parseClickCliArgs(args: Record<string, string | boolean>): {
   tabRef: string;
-  ref: string;
+  uid: string;
 } {
   return {
     tabRef: requireCliStringArg(args, "tab-ref", "tabRef"),
-    ref: requireCliStringArg(args, "ref", "ref"),
+    uid: requireCliStringArg(args, "uid", "uid"),
   };
 }
 
@@ -45,8 +45,7 @@ async function main(): Promise<void> {
 
 if (isDirectCliInvocation(import.meta.url, process.argv[1])) {
   void main().catch((error: unknown) => {
-    const message = error instanceof Error ? error.stack ?? error.message : String(error);
-    process.stderr.write(`${message}\n`);
+    process.stderr.write(`${formatCliError(error)}\n`);
     process.exitCode = 1;
   });
 }

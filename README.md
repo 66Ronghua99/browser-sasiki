@@ -39,12 +39,28 @@ After install, the files that matter most are:
 ## Runtime Requirements
 
 - Node `>=20`
-- Playwright MCP available through `npx @playwright/mcp@latest`, or equivalent custom command via:
+- Google Chrome already running in the session you want to automate
+- remote debugging enabled for that running Chrome session
+- Chrome DevTools MCP available through `npx chrome-devtools-mcp@latest --autoConnect`, or equivalent custom command via:
   - `SASIKI_BROWSER_MCP_COMMAND`
   - `SASIKI_BROWSER_MCP_ARGS`
-- a browser session that Playwright MCP can attach to
+- approval for Chrome DevTools MCP to attach when Chrome prompts for confirmation
 
 There is not yet a dedicated `help` command in the package. For now, this README is the install document and the concise command reference. After `npm install`, call the compiled scripts in `dist/scripts/` rather than the `.ts` source files.
+
+The runtime model in this phase is attach-first: the skill connects to an already running Chrome session through Chrome DevTools MCP auto-connect. It does not launch its own Playwright-managed browser, create a fresh profile, or import cookies on your behalf.
+
+## If Chrome Does Not Attach
+
+If a command fails because the skill cannot attach to Chrome, start with Chrome itself rather than the skill:
+
+1. Open the Google Chrome window you want to automate.
+2. Open `chrome://inspect/#remote-debugging` in that same Chrome session.
+3. Turn on remote debugging there.
+4. If Chrome prompts you to allow Chrome DevTools MCP to connect, click Allow.
+5. Re-run `node dist/scripts/capture.js --tab-ref main`.
+
+The compiled scripts now surface this guidance automatically when Chrome DevTools MCP reports that Chrome is not attachable.
 
 ## What Gets Stored
 
@@ -55,7 +71,7 @@ The temp directory is disposable runtime state. The knowledge file is the durabl
 
 ## Quick Start
 
-Start with `capture`. That command establishes the current browser context and gives you the handle that the rest of the browser task depends on.
+Start Chrome yourself first, make sure remote debugging is enabled for that session, and allow Chrome DevTools MCP to attach if Chrome asks. Then start with `capture`. That command establishes the current browser context and gives you the handle that the rest of the browser task depends on.
 
 Typical sequence:
 
@@ -66,6 +82,8 @@ node dist/scripts/navigate.js --tab-ref main --url https://example.com
 ```
 
 Use `query-snapshot.js --mode full` only when you explicitly need the full current snapshot, such as cold start inspection or debugging.
+
+Chrome DevTools MCP snapshots now come back as accessibility-tree text headed by `## Latest page snapshot`. Element handles in that snapshot are `uid=...`, and `query-snapshot.js` is the single front door for reading or narrowing that snapshot locally.
 
 ## Command Reference
 
@@ -80,7 +98,7 @@ The main command groups are:
   - `node dist/scripts/type.js --tab-ref <tabRef> --ref <element-ref> --text <value>`
   - `node dist/scripts/press.js --tab-ref <tabRef> --key <key-name>`
 - retrieval and knowledge
-  - `node dist/scripts/query-snapshot.js --tab-ref <tabRef> --mode <search|auto|full> [--query <text>] [--role <role>] [--ref <ref>]`
+  - `node dist/scripts/query-snapshot.js --tab-ref <tabRef> --mode <search|auto|full> [--query <text>] [--role <role>] [--uid <uid>]`
   - `node dist/scripts/read-knowledge.js --origin <origin> --normalized-path <path>`
   - `node dist/scripts/record-knowledge.js --origin <origin> --normalized-path <path> --guide <text> [--keywords <comma-separated>]`
 
@@ -104,7 +122,7 @@ The main command groups are:
   - purpose: rebind the task to another browser tab
 - `query-snapshot.js`
   - required: `--mode`, plus one snapshot source such as `--tab-ref`
-  - in `search` mode, also require at least one selector such as `--query`, `--role`, or `--ref`
+  - in `search` mode, also require at least one selector such as `--query`, `--role`, or `--uid`
   - purpose: retrieve a focused slice of the latest bound snapshot
 - `read-knowledge.js`
   - required: either `--id`, or `--origin` plus `--normalized-path`
@@ -118,9 +136,10 @@ The main command groups are:
 
 - Use one `--tab-ref` consistently for one browser task context.
 - Capture first if you are unsure what the current browser context is.
-- `query-snapshot.js --mode search` should include at least one selector such as `--query`, `--role`, or `--ref`.
+- `query-snapshot.js --mode search` should include at least one selector such as `--query`, `--role`, or `--uid`.
 - `query-snapshot.js --mode auto` is the normal retrieval path.
 - `query-snapshot.js --mode full` is the fallback path when targeted retrieval is not enough.
+- `query-snapshot.js` reads Chrome DevTools MCP accessibility snapshots. The canonical element handle is `uid`, and legacy `--ref` still works as a compatibility alias during migration.
 - `read-knowledge.js` and `record-knowledge.js` work on `origin + normalizedPath`, not on arbitrary files.
 - On the first run, `node dist/scripts/capture.js --tab-ref main` is a valid cold-start command.
 

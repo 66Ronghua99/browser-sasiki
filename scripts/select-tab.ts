@@ -1,6 +1,6 @@
 import process from "node:process";
 
-import { isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
+import { formatCliError, isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
 import {
   parseCliIntegerArg,
   readCliStringArg,
@@ -12,7 +12,7 @@ import {
 } from "../lib/browser-action.js";
 
 export async function runSelectTabCommand(
-  args: { tabRef: string; tabIndex: number },
+  args: { tabRef: string; pageId: number },
   deps?: BrowserActionDeps,
 ) {
   return runWithBrowserActionDeps(deps, (resolvedDeps) =>
@@ -20,13 +20,13 @@ export async function runSelectTabCommand(
       {
         action: "select-tab",
         tabRef: args.tabRef,
-        toolName: "browser_tabs",
+        toolName: "select_page",
         toolArgs: {
-          action: "select",
-          index: args.tabIndex,
+          pageId: args.pageId,
+          bringToFront: false,
         },
         preselectBoundTab: false,
-        nextBrowserTabIndex: args.tabIndex,
+        nextBrowserTabIndex: args.pageId,
       },
       resolvedDeps,
     ),
@@ -35,16 +35,24 @@ export async function runSelectTabCommand(
 
 export function parseSelectTabCliArgs(args: Record<string, string | boolean>): {
   tabRef: string;
-  tabIndex: number;
+  pageId: number;
 } {
-  const tabIndexValue = readCliStringArg(args, "index") ?? readCliStringArg(args, "tab-index");
-  if (tabIndexValue === undefined) {
-    throw new Error("index is required (--index)");
+  const pageIdValue =
+    readCliStringArg(args, "page-id")
+    ?? readCliStringArg(args, "index")
+    ?? readCliStringArg(args, "tab-index");
+  if (pageIdValue === undefined) {
+    throw new Error("pageId is required (--page-id)");
+  }
+
+  const pageId = parseCliIntegerArg(pageIdValue, "pageId") ?? requireCliIntegerArg(args, "page-id", "pageId");
+  if (pageId < 1) {
+    throw new Error("pageId must be a positive integer");
   }
 
   return {
     tabRef: requireCliStringArg(args, "tab-ref", "tabRef"),
-    tabIndex: parseCliIntegerArg(tabIndexValue, "index") ?? requireCliIntegerArg(args, "index", "index"),
+    pageId,
   };
 }
 
@@ -56,8 +64,7 @@ async function main(): Promise<void> {
 
 if (isDirectCliInvocation(import.meta.url, process.argv[1])) {
   void main().catch((error: unknown) => {
-    const message = error instanceof Error ? error.stack ?? error.message : String(error);
-    process.stderr.write(`${message}\n`);
+    process.stderr.write(`${formatCliError(error)}\n`);
     process.exitCode = 1;
   });
 }

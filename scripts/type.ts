@@ -1,6 +1,6 @@
 import process from "node:process";
 
-import { isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
+import { formatCliError, isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
 import {
   parseCliBooleanArg,
   requireCliStringArg,
@@ -10,20 +10,26 @@ import {
 } from "../lib/browser-action.js";
 
 export async function runTypeCommand(
-  args: { tabRef: string; ref: string; text: string; slowly?: boolean; submit?: boolean },
+  args: { tabRef: string; uid: string; text: string; slowly?: boolean; submit?: boolean },
   deps?: BrowserActionDeps,
 ) {
+  if (args.submit) {
+    throw new Error("type submit is unsupported: Chrome DevTools MCP requires a separate press command");
+  }
+
+  if (args.slowly) {
+    throw new Error("type slowly is unsupported: Chrome DevTools MCP fill does not support slow typing");
+  }
+
   return runWithBrowserActionDeps(deps, (resolvedDeps) =>
     runBrowserAction(
       {
         action: "type",
         tabRef: args.tabRef,
-        toolName: "browser_type",
+        toolName: "fill",
         toolArgs: {
-          ref: args.ref,
-          text: args.text,
-          ...(args.slowly !== undefined ? { slowly: args.slowly } : {}),
-          ...(args.submit !== undefined ? { submit: args.submit } : {}),
+          uid: args.uid,
+          value: args.text,
         },
       },
       resolvedDeps,
@@ -33,14 +39,14 @@ export async function runTypeCommand(
 
 export function parseTypeCliArgs(args: Record<string, string | boolean>): {
   tabRef: string;
-  ref: string;
+  uid: string;
   text: string;
   slowly?: boolean;
   submit?: boolean;
 } {
   return {
     tabRef: requireCliStringArg(args, "tab-ref", "tabRef"),
-    ref: requireCliStringArg(args, "ref", "ref"),
+    uid: requireCliStringArg(args, "uid", "uid"),
     text: requireCliStringArg(args, "text", "text"),
     slowly: parseCliBooleanArg(args.slowly),
     submit: parseCliBooleanArg(args.submit),
@@ -55,8 +61,7 @@ async function main(): Promise<void> {
 
 if (isDirectCliInvocation(import.meta.url, process.argv[1])) {
   void main().catch((error: unknown) => {
-    const message = error instanceof Error ? error.stack ?? error.message : String(error);
-    process.stderr.write(`${message}\n`);
+    process.stderr.write(`${formatCliError(error)}\n`);
     process.exitCode = 1;
   });
 }
