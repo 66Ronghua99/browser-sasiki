@@ -1,0 +1,52 @@
+import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { mkdtemp } from "node:fs/promises";
+
+import { KnowledgeStore } from "../../lib/knowledge-store.js";
+
+test("KnowledgeStore appends page knowledge and reads it back by exact page", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-knowledge-"));
+  const storePath = path.join(root, "page-knowledge.jsonl");
+  const store = new KnowledgeStore(storePath);
+
+  await store.append({
+    id: "k1",
+    page: {
+      origin: "https://example.com",
+      normalizedPath: "/chat/inbox/current",
+    },
+    guide: "Check the queue header first.",
+    keywords: ["Customer messages", "No chats yet"],
+    createdAt: "2026-03-30T00:00:00.000Z",
+    updatedAt: "2026-03-30T00:00:00.000Z",
+    sourceSnapshotPath: "/tmp/snapshot.md",
+    sourceAction: "capture",
+  });
+
+  await store.append({
+    id: "k2",
+    page: {
+      origin: "https://example.com",
+      normalizedPath: "/dashboard",
+    },
+    guide: "Dashboard guide should not leak into the inbox.",
+    keywords: ["dashboard"],
+    createdAt: "2026-03-30T00:00:00.000Z",
+    updatedAt: "2026-03-30T00:00:00.000Z",
+    sourceSnapshotPath: "/tmp/dashboard.md",
+    sourceAction: "capture",
+  });
+
+  const reopenedStore = new KnowledgeStore(storePath);
+  const matches = await reopenedStore.queryByPage({
+    origin: "https://example.com",
+    normalizedPath: "/chat/inbox/current",
+  });
+
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].id, "k1");
+  assert.equal(matches[0].guide, "Check the queue header first.");
+  assert.deepEqual(matches[0].keywords, ["Customer messages", "No chats yet"]);
+});
