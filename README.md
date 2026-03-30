@@ -1,8 +1,8 @@
 # Browser Skill
 
-Browser Skill is a browser automation skill for coding agents. Its core job is to help you finish browser tasks through a stable CLI surface instead of dumping full Playwright snapshots into the model context on every turn.
+Browser Skill is a browser automation skill for coding agents. The most important thing to understand is that this is not meant to be just a pile of helper scripts. It is meant to be the default way an agent performs browser automation work. The current run should be easier to control, and later runs should gradually become cheaper and faster because useful page-level knowledge can accumulate over time.
 
-The mental model is straightforward: browser automation comes first, and page knowledge exists to make later automation cheaper and more reliable. Every action is anchored to a `tabRef`, every mutation captures a fresh snapshot, snapshots stay in temp storage instead of being pasted into chat, and durable page knowledge is recorded only when it clearly helps future runs.
+In other words, browser automation is the first goal and self-improvement is the second goal. If you keep using the skill the intended way, it should become better at repeated browser work without asking the agent to manually rediscover the same page structure every time.
 
 ## Install
 
@@ -46,7 +46,7 @@ After install, the files that matter most are:
   - `SASIKI_BROWSER_MCP_ARGS`
 - a browser session that Playwright MCP can attach to
 
-There is not yet a dedicated `help` command in the package. For now, treat this README as the detailed command reference. That is deliberate: the main thing this skill still needs is a clear operating model and clear install/use documentation, not another layer of wrapper commands.
+There is not yet a dedicated `help` command in the package. For now, this README should be treated as the detailed command reference. That is intentional: right now the bigger need is a clear operating model and clear installation and usage documentation, not another wrapper command.
 
 ## What Gets Stored
 
@@ -57,7 +57,7 @@ The temp directory is disposable runtime state. The knowledge file is the durabl
 
 ## Command Surface
 
-Start with `capture.ts`. That command establishes the current browser context and gives you the `tabRef` that the rest of the flow depends on.
+Start with `capture.ts`. That command establishes the current browser context and gives you the handle that the rest of the browser task depends on.
 
 The main command groups are:
 
@@ -74,31 +74,58 @@ The main command groups are:
   - `read-knowledge.ts --origin <origin> --normalized-path <path>`
   - `record-knowledge.ts --origin <origin> --normalized-path <path> --guide <text> [--keywords <comma-separated>]`
 
-In practice:
-
-- `capture.ts` binds or refreshes a `tabRef`, captures a fresh snapshot, and loads matching page knowledge
-- every mutation command auto-captures after the action and updates the latest snapshot bound to that `tabRef`
-- `query-snapshot.ts` is the detailed retrieval front door when `knowledgeHits` are not enough
-- `read-knowledge.ts` and `record-knowledge.ts` are for durable page-level knowledge, not for temporary page inspection
+In practice, `capture.ts` establishes or refreshes the current bound context, every mutation command refreshes browser state after acting, `query-snapshot.ts` is the detailed retrieval front door when compact guidance is not enough, and the knowledge commands are the durable interface for reusable page-level cues.
 
 ## Detailed CLI Notes
 
-`capture.ts` is how you enter the skill. If you are unsure which page state the agent should trust, capture again and keep using the returned `tabRef`.
+`capture.ts` is how you enter the skill. If you are unsure which page state the agent should trust, capture again and keep using the returned bound context.
 
-`navigate.ts`, `click.ts`, `type.ts`, `press.ts`, and `select-tab.ts` are the mutation surface. They all require `--tab-ref`, and they all assume that the caller already knows which task context they are operating in.
+`navigate.ts`, `click.ts`, `type.ts`, `press.ts`, and `select-tab.ts` are the mutation surface. They all assume that the caller is staying inside one coherent browser task flow rather than firing disconnected browser commands.
 
-`query-snapshot.ts` is the detailed lookup tool. You give it a `--tab-ref`, a required `--mode`, and then one or more selectors such as `--query`, `--role`, or `--ref` when using `search`. In other words, it is meant to retrieve a specific slice of the latest bound snapshot, not to become another excuse to dump whole page state into chat unless you deliberately use `--mode full`.
+`query-snapshot.ts` is the detailed lookup tool. You give it the current browser context, a required mode, and then the selectors you care about. In other words, it is meant to retrieve a specific slice of the latest bound snapshot, not to become another excuse to dump whole page state into chat unless you deliberately use `--mode full`.
 
 `read-knowledge.ts` and `record-knowledge.ts` both work at the level of page identity, which means `origin + normalizedPath`. They are not generic file readers or append-only notes commands; they are the durable interface for reusable page cues.
 
+If you want a more explicit parameter-level reference, use this table:
+
+- `capture.ts`
+  - required: `--tab-ref`
+  - purpose: establish or refresh the current browser task context
+- `navigate.ts`
+  - required: `--tab-ref`, `--url`
+  - purpose: move the bound browser task to a new URL
+- `click.ts`
+  - required: `--tab-ref`, `--ref`
+  - purpose: click a known element in the current bound page
+- `type.ts`
+  - required: `--tab-ref`, `--ref`, `--text`
+  - purpose: type into a known element in the current bound page
+- `press.ts`
+  - required: `--tab-ref`, `--key`
+  - purpose: send a keyboard action in the current bound page
+- `select-tab.ts`
+  - required: `--tab-ref`, `--index`
+  - purpose: rebind the task to another browser tab
+- `query-snapshot.ts`
+  - required: `--mode`, plus one snapshot source such as `--tab-ref`
+  - in `search` mode, also require at least one selector such as `--query`, `--role`, or `--ref`
+  - purpose: retrieve a focused slice of the latest bound snapshot
+- `read-knowledge.ts`
+  - required: either `--id`, or `--origin` plus `--normalized-path`
+  - purpose: read durable page knowledge
+- `record-knowledge.ts`
+  - required: `--origin`, `--normalized-path`, `--guide`
+  - optional: `--keywords`
+  - purpose: save a durable reusable page cue
+
 ## Recommended Flow
 
-The intended flow is to capture first, keep using the returned `tabRef` for every mutation, and only go deeper into snapshot retrieval when the returned `knowledgeHits` are not enough to continue. The more you treat `query-snapshot.ts` as a precise retrieval tool instead of a generic “show me everything” tool, the more value you get from the skill’s token-efficiency model.
+The intended flow is to capture first, keep using the returned bound context for every mutation, and only go deeper into snapshot retrieval when the returned guidance is not enough to continue. The more you treat `query-snapshot.ts` as a precise retrieval tool instead of a generic “show me everything” tool, the more value you get from the skill’s token-efficiency model.
 
 When a page reveals something stable and obviously reusable, record it. When it does not, keep moving. The skill is designed so that browser work can still succeed even if nothing new gets written to durable knowledge.
 
 ## Notes For Agents
 
-- Do not guess tab ownership. If you do not have a `tabRef`, capture first.
+- Do not guess browser context. If you are unsure, capture first.
 - Do not treat this as a knowledge-harvesting skill. Its job is to finish browser work.
 - Use `query-snapshot.ts` as a local retrieval tool, not as a reason to inline whole snapshots into the chat.
