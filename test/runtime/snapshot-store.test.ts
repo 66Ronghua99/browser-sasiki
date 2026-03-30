@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, utimes } from "node:fs/promises";
+import { mkdtemp, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -20,4 +20,13 @@ test("snapshot store writes files and deletes expired files", async () => {
 
   assert.equal(await store.exists(fresh.snapshotPath), true);
   assert.equal(await store.exists(expired.snapshotPath), false);
+});
+
+test("snapshot store cleanup surfaces unrelated filesystem errors", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-snapshots-"));
+  const fileRoot = path.join(root, "snapshots-root-as-file");
+  await writeFile(fileRoot, "not a directory", "utf8");
+  const store = new SnapshotStore(fileRoot, { ttlMs: 10 });
+
+  await assert.rejects(() => store.cleanupExpired(), /ENOTDIR|not a directory/i);
 });

@@ -66,6 +66,29 @@ test("mcp browser client captures snapshots through browser_snapshot", async () 
   assert.deepEqual(toolClient.calls, [{ name: "browser_snapshot", args: {} }]);
 });
 
+test("mcp browser client rejects browser_snapshot error payloads", async () => {
+  const toolClient = new StubToolClient();
+  toolClient.callTool = async (name: string, args: Record<string, unknown>): Promise<ToolCallResult> => {
+    toolClient.calls.push({ name, args });
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "### Error\nbrowser_snapshot failed before a valid observation was produced",
+        },
+      ],
+    };
+  };
+  const client = new McpBrowserClient(toolClient);
+
+  await assert.rejects(
+    () => client.captureSnapshot(),
+    /browser_snapshot returned an error/i
+  );
+  assert.deepEqual(toolClient.calls, [{ name: "browser_snapshot", args: {} }]);
+});
+
 test("mcp browser client forwards generic browser tools unchanged", async () => {
   const toolClient = new StubToolClient();
   const client = new McpBrowserClient(toolClient);

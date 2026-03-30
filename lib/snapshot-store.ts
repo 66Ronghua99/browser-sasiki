@@ -32,8 +32,11 @@ export class SnapshotStore {
     let entries;
     try {
       entries = await readdir(this.rootDir, { withFileTypes: true });
-    } catch {
-      return;
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        return;
+      }
+      throw error;
     }
 
     for (const entry of entries) {
@@ -41,10 +44,24 @@ export class SnapshotStore {
         continue;
       }
       const filePath = path.join(this.rootDir, entry.name);
-      const fileStat = await stat(filePath);
-      if (now - fileStat.mtimeMs > this.options.ttlMs) {
-        await rm(filePath, { force: true });
+      try {
+        const fileStat = await stat(filePath);
+        if (now - fileStat.mtimeMs > this.options.ttlMs) {
+          await rm(filePath, { force: true });
+        }
+      } catch (error) {
+        if (!isMissingPathError(error)) {
+          throw error;
+        }
       }
     }
   }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return isNodeErrorWithCode(error, "ENOENT");
+}
+
+function isNodeErrorWithCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === code;
 }

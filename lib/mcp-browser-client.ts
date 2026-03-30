@@ -21,7 +21,11 @@ export class McpBrowserClient {
   constructor(private readonly toolClient: ToolClientLike) {}
 
   async captureSnapshot(): Promise<string> {
-    return readToolText(await this.toolClient.callTool("browser_snapshot", {}));
+    const result = await this.toolClient.callTool("browser_snapshot", {});
+    if (result.isError === true) {
+      throw new Error(`browser_snapshot returned an error: ${readToolText(result)}`);
+    }
+    return readToolText(result);
   }
 
   async callBrowserTool(name: string, args: Record<string, unknown>): Promise<ToolCallResultLike> {
