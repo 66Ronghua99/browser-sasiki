@@ -4,6 +4,13 @@ export interface SkillPageIdentity {
   title: string;
 }
 
+export interface SkillTabSummary {
+  tabRef: string;
+  title: string;
+  url: string;
+  active: boolean;
+}
+
 export interface KnowledgeHit {
   guide: string;
   keywords: string[];
@@ -11,16 +18,19 @@ export interface KnowledgeHit {
 }
 
 export interface CaptureResult {
-  ok: boolean;
+  ok: true;
   tabRef: string;
   page: SkillPageIdentity;
   snapshotPath: string;
   knowledgeHits: KnowledgeHit[];
+  tabs: SkillTabSummary[];
   summary: string;
 }
 
+export type SkillAction = "navigate" | "click" | "type" | "press" | "select-tab";
+
 export interface ActionResult extends CaptureResult {
-  action: "navigate" | "click" | "type" | "press" | "select-tab";
+  action: SkillAction;
 }
 
 function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
@@ -61,6 +71,23 @@ function assertKnowledgeHits(value: unknown): asserts value is KnowledgeHit[] {
   }
 }
 
+function assertTabSummary(tab: unknown, index: number): asserts tab is SkillTabSummary {
+  assertRecord(tab, `tabs[${index}]`);
+  assertString(tab.tabRef, `tabs[${index}].tabRef`);
+  assertString(tab.title, `tabs[${index}].title`);
+  assertString(tab.url, `tabs[${index}].url`);
+  if (typeof tab.active !== "boolean") {
+    throw new TypeError(`tabs[${index}].active must be a boolean`);
+  }
+}
+
+function assertTabs(value: unknown): asserts value is SkillTabSummary[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError("tabs must be an array");
+  }
+  value.forEach((tab, index) => assertTabSummary(tab, index));
+}
+
 function assertCaptureShape(result: unknown): asserts result is CaptureResult {
   assertRecord(result, "result");
   if (result.ok !== true) {
@@ -70,6 +97,7 @@ function assertCaptureShape(result: unknown): asserts result is CaptureResult {
   assertPageIdentity(result.page);
   assertString(result.snapshotPath, "snapshotPath");
   assertKnowledgeHits(result.knowledgeHits);
+  assertTabs(result.tabs);
   assertString(result.summary, "summary");
 }
 
@@ -86,6 +114,15 @@ export function assertActionResult(result: unknown): asserts result is ActionRes
   assertString(result.tabRef, "tabRef");
   assertPageIdentity(result.page);
   assertKnowledgeHits(result.knowledgeHits);
+  assertTabs(result.tabs);
   assertString(result.summary, "summary");
-  assertString(result.action, "action");
+  if (
+    result.action !== "navigate" &&
+    result.action !== "click" &&
+    result.action !== "type" &&
+    result.action !== "press" &&
+    result.action !== "select-tab"
+  ) {
+    throw new TypeError("action must be one of navigate, click, type, press, select-tab");
+  }
 }
