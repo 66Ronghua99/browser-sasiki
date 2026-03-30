@@ -15,7 +15,7 @@ Use it whenever the underlying job is browser automation: navigating a site, cli
 
 ## How To Start
 
-Start with `capture.ts`. That establishes a trustworthy browser context for the current task. If you do not already have a valid bound context, capture first and continue from there.
+Start with `node dist/scripts/capture.js --tab-ref <tabRef>`. That establishes a trustworthy browser context for the current task. If you do not already have a valid bound context, capture first and continue from there.
 
 ## Work Model
 
@@ -25,17 +25,17 @@ Establish context first. Then keep doing the browser work through this skill ins
 
 At the CLI level, the skill currently exposes these commands:
 
-- `capture.ts --tab-ref <tabRef>`
-- `navigate.ts --tab-ref <tabRef> --url <absolute-url>`
-- `click.ts --tab-ref <tabRef> --ref <element-ref>`
-- `type.ts --tab-ref <tabRef> --ref <element-ref> --text <value>`
-- `press.ts --tab-ref <tabRef> --key <key-name>`
-- `select-tab.ts --tab-ref <tabRef> --index <tab-index>`
-- `query-snapshot.ts --tab-ref <tabRef> --mode <search|auto|full> [--query <text>] [--role <role>] [--ref <ref>]`
-- `read-knowledge.ts --origin <origin> --normalized-path <path>`
-- `record-knowledge.ts --origin <origin> --normalized-path <path> --guide <text> [--keywords <comma-separated>]`
+- `node dist/scripts/capture.js --tab-ref <tabRef>`
+- `node dist/scripts/navigate.js --tab-ref <tabRef> --url <absolute-url>`
+- `node dist/scripts/click.js --tab-ref <tabRef> --ref <element-ref>`
+- `node dist/scripts/type.js --tab-ref <tabRef> --ref <element-ref> --text <value>`
+- `node dist/scripts/press.js --tab-ref <tabRef> --key <key-name>`
+- `node dist/scripts/select-tab.js --tab-ref <tabRef> --index <tab-index>`
+- `node dist/scripts/query-snapshot.js --tab-ref <tabRef> --mode <search|auto|full> [--query <text>] [--role <role>] [--ref <ref>]`
+- `node dist/scripts/read-knowledge.js --origin <origin> --normalized-path <path>`
+- `node dist/scripts/record-knowledge.js --origin <origin> --normalized-path <path> --guide <text> [--keywords <comma-separated>]`
 
-Use the README as the denser operator-facing reference for installation and exact command details.
+Use the README as the denser operator-facing reference for installation and exact command details. After installation, call the compiled `dist/scripts/*.js` entrypoints rather than the `.ts` source files.
 
 ## Practical Rules
 

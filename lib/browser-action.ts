@@ -20,7 +20,7 @@ export interface BrowserRuntime {
 
 export interface BrowserActionDeps {
   browser: BrowserRuntime;
-  tabBindings: TabBindingStore;
+  tabBindings: Pick<TabBindingStore, "read" | "write" | "exists">;
   snapshots: SnapshotStore;
   knowledge: Pick<KnowledgeStore, "queryByPage">;
 }
@@ -55,14 +55,23 @@ class DefaultBrowserRuntime implements BrowserRuntime {
     const result = await this.callBrowserTool("browser_tabs", { action: "list" });
     const text = readToolText(result);
     if (!text) {
-      throw new Error("browser_tabs list did not return any tab text");
+      return this.readActiveTabIndexFromSnapshot();
     }
 
     const activeTab = parseTabInventory(text).find((tab) => tab.active);
     if (!activeTab) {
-      throw new Error("browser_tabs list did not identify a current tab");
+      return this.readActiveTabIndexFromSnapshot();
     }
 
+    return activeTab.index;
+  }
+
+  private async readActiveTabIndexFromSnapshot(): Promise<number> {
+    const snapshotText = await this.captureSnapshot();
+    const activeTab = parseTabInventory(snapshotText).find((tab) => tab.active);
+    if (!activeTab) {
+      throw new Error("unable to identify the current tab from browser_tabs list or snapshot inventory");
+    }
     return activeTab.index;
   }
 }
@@ -370,8 +379,11 @@ async function resolveCaptureTabIndex(
   }
 
   if (providedTabRef) {
-    const existingBinding = await deps.tabBindings.read(providedTabRef);
-    return existingBinding.browserTabIndex;
+    const bindingExists = await deps.tabBindings.exists(providedTabRef);
+    if (bindingExists) {
+      const existingBinding = await deps.tabBindings.read(providedTabRef);
+      return existingBinding.browserTabIndex;
+    }
   }
 
   return deps.browser.readActiveTabIndex();

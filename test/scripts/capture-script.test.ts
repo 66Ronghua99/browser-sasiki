@@ -60,6 +60,20 @@ class StubBrowser {
   }
 }
 
+class BrowserTabsListFallbackStub extends StubBrowser {
+  override async callBrowserTool(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<{ content: Array<{ text: string }> }> {
+    if (name === "browser_tabs" && args.action === "list") {
+      return {
+        content: [{ text: "tabs listed without a parseable active marker" }],
+      };
+    }
+    return super.callBrowserTool(name, args);
+  }
+}
+
 async function createHarness() {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-capture-"));
   const runtimeRoot = path.join(root, ".sasiki", "browser-skill", "tmp");
@@ -112,6 +126,43 @@ test("capture binds the current tab and returns a tabRef plus snapshotPath", asy
   assert.equal(binding.browserTabIndex, 1);
   assert.equal(binding.snapshotPath, result.snapshotPath);
   assert.equal(binding.page.normalizedPath, "/chat/inbox/current");
+});
+
+test("capture accepts a fresh explicit tabRef and creates the first binding", async () => {
+  const harness = await createHarness();
+
+  const result = await runCaptureCommand({ tabRef: "main" }, harness);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.tabRef, "main");
+  assert.equal(result.page.normalizedPath, "/chat/inbox/current");
+
+  const binding = await harness.tabBindings.read("main");
+  assert.equal(binding.browserTabIndex, 1);
+  assert.equal(binding.page.normalizedPath, "/chat/inbox/current");
+});
+
+test("capture falls back to snapshot tab inventory when browser_tabs list output is not parseable", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-capture-fallback-"));
+  const runtimeRoot = path.join(root, ".sasiki", "browser-skill", "tmp");
+  const browser = new BrowserTabsListFallbackStub(
+    [
+      { index: 0, title: "Home", url: "https://example.com/home" },
+      { index: 1, title: "Inbox", url: "https://example.com/chat/inbox/current" },
+    ],
+    1,
+  );
+  const tabBindings = new TabBindingStore(path.join(runtimeRoot, "tab-state"));
+  const snapshots = new SnapshotStore(path.join(runtimeRoot, "snapshots"), { ttlMs: 60_000 });
+  const knowledgeFile = path.join(root, "skill", "knowledge", "page-knowledge.jsonl");
+  await mkdir(path.dirname(knowledgeFile), { recursive: true });
+  const knowledge = new KnowledgeStore(knowledgeFile);
+
+  const result = await runCaptureCommand({}, { browser, tabBindings, snapshots, knowledge });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.page.normalizedPath, "/chat/inbox/current");
+  assert.equal(result.tabs[1]?.active, true);
 });
 
 test("capture CLI parsing rejects valueless optional flags and still accepts absent ones", () => {

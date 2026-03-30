@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SkillPageIdentity } from "./types.js";
 
@@ -20,6 +20,18 @@ export class TabBindingStore {
   async read(tabRef: string): Promise<TabBindingRecord> {
     const raw = await readFile(this.filePath(tabRef), "utf8");
     return parseTabBindingRecord(raw);
+  }
+
+  async exists(tabRef: string): Promise<boolean> {
+    try {
+      await access(this.filePath(tabRef));
+      return true;
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   async delete(tabRef: string): Promise<void> {
@@ -71,4 +83,8 @@ function assertNonEmptyString(value: unknown, label: string): asserts value is s
 
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
