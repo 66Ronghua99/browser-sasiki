@@ -89,6 +89,27 @@ test("mcp browser client rejects browser_snapshot error payloads", async () => {
   assert.deepEqual(toolClient.calls, [{ name: "browser_snapshot", args: {} }]);
 });
 
+test("mcp browser client rejects malformed browser_snapshot success payloads", async () => {
+  const toolClient = new StubToolClient();
+  toolClient.callTool = async (name: string, args: Record<string, unknown>): Promise<ToolCallResult> => {
+    toolClient.calls.push({ name, args });
+    return {
+      content: [
+        {
+          type: "json",
+          value: { unexpected: true },
+        },
+      ],
+    };
+  };
+  const client = new McpBrowserClient(toolClient);
+
+  await assert.rejects(
+    () => client.captureSnapshot(),
+    /browser_snapshot returned a malformed payload/i
+  );
+});
+
 test("mcp browser client forwards generic browser tools unchanged", async () => {
   const toolClient = new StubToolClient();
   const client = new McpBrowserClient(toolClient);

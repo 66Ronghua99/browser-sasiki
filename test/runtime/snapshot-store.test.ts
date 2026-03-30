@@ -30,3 +30,10 @@ test("snapshot store cleanup surfaces unrelated filesystem errors", async () => 
 
   await assert.rejects(() => store.cleanupExpired(), /ENOTDIR|not a directory/i);
 });
+
+test("snapshot store exists surfaces unrelated filesystem errors", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-snapshots-"));
+  const store = new SnapshotStore(path.join(root, "snapshots"), { ttlMs: 10 });
+
+  await assert.rejects(() => store.exists("invalid\0path"), /ERR_INVALID_ARG_VALUE|invalid argument/i);
+});

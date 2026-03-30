@@ -23,8 +23,11 @@ export class SnapshotStore {
     try {
       await stat(snapshotPath);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        return false;
+      }
+      throw error;
     }
   }
 

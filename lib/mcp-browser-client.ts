@@ -23,9 +23,13 @@ export class McpBrowserClient {
   async captureSnapshot(): Promise<string> {
     const result = await this.toolClient.callTool("browser_snapshot", {});
     if (result.isError === true) {
-      throw new Error(`browser_snapshot returned an error: ${readToolText(result)}`);
+      throw new Error(`browser_snapshot returned an error: ${describeToolResult(result)}`);
     }
-    return readToolText(result);
+    const snapshotText = readToolText(result);
+    if (snapshotText === null) {
+      throw new Error("browser_snapshot returned a malformed payload: expected text content");
+    }
+    return snapshotText;
   }
 
   async callBrowserTool(name: string, args: Record<string, unknown>): Promise<ToolCallResultLike> {
@@ -33,7 +37,7 @@ export class McpBrowserClient {
   }
 }
 
-function readToolText(result: ToolCallResultLike): string {
+function readToolText(result: ToolCallResultLike): string | null {
   if (typeof result === "string") {
     return result;
   }
@@ -47,6 +51,14 @@ function readToolText(result: ToolCallResultLike): string {
         return text;
       }
     }
+  }
+  return null;
+}
+
+function describeToolResult(result: ToolCallResultLike): string {
+  const text = readToolText(result);
+  if (text !== null) {
+    return text;
   }
   try {
     return JSON.stringify(result);
