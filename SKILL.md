@@ -1,9 +1,32 @@
 ---
 name: browser-skill
-description: Use when an agent needs to automate a browser page with explicit tab ownership, snapshot queries, and optional page knowledge capture.
+description: Use when you need to automate a browser task through a tabRef-based skill surface, especially when you want lower-token snapshot retrieval and reusable page knowledge without pushing full browser snapshots into chat.
 ---
 
 # Browser Skill
+
+## Overview
+
+You should use this skill when browser automation is the main goal and you want a cleaner control surface than direct raw Playwright tools.
+
+This skill wraps Playwright MCP behind a small set of TypeScript commands. Its core model is:
+
+- browser automation first
+- explicit `tabRef` ownership instead of guessing the active tab
+- fresh snapshot after every mutation
+- local snapshot querying instead of dumping whole snapshots into context
+- page knowledge as a reusable byproduct, not the main task
+
+## When To Use
+
+Use this skill when:
+
+- you need to navigate, click, type, press keys, or switch tabs in a real browser
+- you want each task flow anchored to a stable `tabRef`
+- you want to query only the relevant part of the latest snapshot
+- you expect repeated work on the same `origin + normalizedPath` pages and want reusable page knowledge
+
+Do not use this skill as a generic knowledge-writing tool. If there is no browser task to finish, this is probably the wrong skill.
 
 ## What To Do First
 
@@ -15,6 +38,15 @@ Begin with `capture.ts`.
 
 If you do not have a `tabRef`, do not guess one and do not proceed with mutation scripts.
 
+## Core Work Model
+
+1. `capture.ts` establishes or refreshes the tab binding.
+2. Mutation commands use that same `tabRef`.
+3. Each mutation auto-captures a fresh snapshot.
+4. You inspect `knowledgeHits` first.
+5. Only if needed, you call `query-snapshot.ts` to look deeper into the latest bound snapshot.
+6. If the page revealed a stable reusable cue, you record it.
+
 ## Default Check Path
 
 Check returned `knowledgeHits` first after capture or any mutation.
@@ -24,13 +56,6 @@ Check returned `knowledgeHits` first after capture or any mutation.
 - Use `record-knowledge.ts` only when the current task reveals a reusable cue that is worth keeping.
 
 Do not treat knowledge recording as required for task completion. Browser work should keep moving even when no knowledge is worth saving.
-
-## Command Order
-
-1. `capture.ts` to establish or refresh the tab binding.
-2. `navigate.ts`, `click.ts`, `type.ts`, `press.ts`, or `select-tab.ts` to perform the task. These commands auto-capture and refresh the bound snapshot after each action.
-3. Inspect `knowledgeHits` first; use `query-snapshot.ts` only if the hits are not enough and you still need a fresh `ref`.
-4. `record-knowledge.ts` only if a durable page cue emerged.
 
 ## Invocation Shapes
 
