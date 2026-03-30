@@ -103,3 +103,50 @@ test("read knowledge can fetch a record by id and fails for a missing id", async
     /Knowledge record not found for id missing-id/
   );
 });
+
+test("recording the same knowledge id replaces stale duplicates for id and page reads", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-knowledge-"));
+  const storePath = path.join(root, "page-knowledge.jsonl");
+
+  await runRecordKnowledgeCommand({
+    "knowledge-file": storePath,
+    id: "k-duplicate",
+    origin: "https://example.com",
+    path: "/chat/inbox/current/",
+    guide: "Initial queue guidance.",
+    keywords: "inbox,initial",
+  });
+
+  await runRecordKnowledgeCommand({
+    "knowledge-file": storePath,
+    id: "k-duplicate",
+    origin: "https://example.com",
+    path: "/chat/inbox/current",
+    guide: "Updated queue guidance.",
+    keywords: "inbox,updated",
+  });
+
+  const idReadResult = await runReadKnowledgeCommand({
+    "knowledge-file": storePath,
+    id: "k-duplicate",
+  });
+
+  assert.equal(idReadResult.mode, "id");
+  assert.equal(idReadResult.knowledge.guide, "Updated queue guidance.");
+  assert.equal(idReadResult.knowledge.page.normalizedPath, "/chat/inbox/current");
+
+  const pageReadResult = await runReadKnowledgeCommand({
+    "knowledge-file": storePath,
+    origin: "https://example.com",
+    path: "/chat/inbox/current/",
+  });
+
+  assert.equal(pageReadResult.mode, "page");
+  assert.equal(pageReadResult.knowledge.length, 1);
+  assert.equal(pageReadResult.knowledge[0].guide, "Updated queue guidance.");
+
+  const store = new KnowledgeStore(storePath);
+  const allRecords = await store.readAll();
+  assert.equal(allRecords.length, 1);
+  assert.equal(allRecords[0].guide, "Updated queue guidance.");
+});

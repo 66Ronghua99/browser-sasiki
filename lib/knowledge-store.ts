@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { normalizePagePath } from "./page-identity.js";
@@ -79,26 +79,41 @@ function parseKnowledgeLine(line: string, lineNumber: number): DurableKnowledgeR
   }
 }
 
+function canonicalizeRecords(records: DurableKnowledgeRecord[]): DurableKnowledgeRecord[] {
+  const byId = new Map<string, DurableKnowledgeRecord>();
+  for (const record of records) {
+    byId.delete(record.id);
+    byId.set(record.id, record);
+  }
+
+  return [...byId.values()];
+}
+
 export class KnowledgeStore {
   constructor(private readonly filePath: string) {}
 
   async append(record: DurableKnowledgeRecord): Promise<void> {
     assertKnowledgeRecord(record);
-    record.page.normalizedPath = normalizePagePath(record.page.normalizedPath);
+    const normalizedRecord: DurableKnowledgeRecord = {
+      ...record,
+      page: {
+        ...record.page,
+        normalizedPath: normalizePagePath(record.page.normalizedPath),
+      },
+    };
+
+    const existingRecords = await this.readRawAll();
+    const canonicalRecords = canonicalizeRecords([...existingRecords, normalizedRecord]);
     await mkdir(path.dirname(this.filePath), { recursive: true });
-    await appendFile(this.filePath, `${JSON.stringify(record)}\n`, "utf8");
+    await writeFile(
+      this.filePath,
+      `${canonicalRecords.map((item) => JSON.stringify(item)).join("\n")}\n`,
+      "utf8"
+    );
   }
 
   async readAll(): Promise<DurableKnowledgeRecord[]> {
-    if (!fs.existsSync(this.filePath)) {
-      return [];
-    }
-
-    const contents = await readFile(this.filePath, "utf8");
-    return contents
-      .split(/\r?\n/)
-      .filter((line) => line.trim().length > 0)
-      .map((line, index) => parseKnowledgeLine(line, index + 1));
+    return canonicalizeRecords(await this.readRawAll());
   }
 
   async queryByPage(page: DurableKnowledgePageRef): Promise<DurableKnowledgeRecord[]> {
@@ -122,5 +137,17 @@ export class KnowledgeStore {
     }
 
     return record;
+  }
+
+  private async readRawAll(): Promise<DurableKnowledgeRecord[]> {
+    if (!fs.existsSync(this.filePath)) {
+      return [];
+    }
+
+    const contents = await readFile(this.filePath, "utf8");
+    return contents
+      .split(/\r?\n/)
+      .filter((line) => line.trim().length > 0)
+      .map((line, index) => parseKnowledgeLine(line, index + 1));
   }
 }
