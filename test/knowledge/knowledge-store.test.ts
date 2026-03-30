@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 
 import { KnowledgeStore } from "../../lib/knowledge-store.js";
 import { runReadKnowledgeCommand } from "../../scripts/read-knowledge.js";
@@ -149,4 +149,43 @@ test("recording the same knowledge id replaces stale duplicates for id and page 
   const allRecords = await store.readAll();
   assert.equal(allRecords.length, 1);
   assert.equal(allRecords[0].guide, "Updated queue guidance.");
+});
+
+test("legacy JSONL records are normalized on read for both id and page lookups", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-knowledge-"));
+  const storePath = path.join(root, "page-knowledge.jsonl");
+
+  await writeFile(
+    storePath,
+    [
+      JSON.stringify({
+        id: "legacy-1",
+        page: {
+          origin: "https://example.com",
+          normalizedPath: "/chat/inbox/current/",
+        },
+        guide: "Legacy guidance.",
+        keywords: ["legacy"],
+        createdAt: "2026-03-30T00:00:00.000Z",
+        updatedAt: "2026-03-30T00:00:00.000Z",
+        sourceSnapshotPath: "/tmp/legacy.md",
+        sourceAction: "capture",
+      }),
+      "",
+    ].join("\n"),
+    "utf8"
+  );
+
+  const store = new KnowledgeStore(storePath);
+  const byId = await store.readById("legacy-1");
+  assert.equal(byId.page.normalizedPath, "/chat/inbox/current");
+
+  const byPage = await store.queryByPage({
+    origin: "https://example.com",
+    normalizedPath: "/chat/inbox/current",
+  });
+
+  assert.equal(byPage.length, 1);
+  assert.equal(byPage[0].id, "legacy-1");
+  assert.equal(byPage[0].page.normalizedPath, "/chat/inbox/current");
 });

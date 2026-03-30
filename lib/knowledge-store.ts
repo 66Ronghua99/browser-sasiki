@@ -79,6 +79,16 @@ function parseKnowledgeLine(line: string, lineNumber: number): DurableKnowledgeR
   }
 }
 
+function normalizeKnowledgeRecord(record: DurableKnowledgeRecord): DurableKnowledgeRecord {
+  return {
+    ...record,
+    page: {
+      ...record.page,
+      normalizedPath: normalizePagePath(record.page.normalizedPath),
+    },
+  };
+}
+
 function canonicalizeRecords(records: DurableKnowledgeRecord[]): DurableKnowledgeRecord[] {
   const byId = new Map<string, DurableKnowledgeRecord>();
   for (const record of records) {
@@ -94,13 +104,7 @@ export class KnowledgeStore {
 
   async append(record: DurableKnowledgeRecord): Promise<void> {
     assertKnowledgeRecord(record);
-    const normalizedRecord: DurableKnowledgeRecord = {
-      ...record,
-      page: {
-        ...record.page,
-        normalizedPath: normalizePagePath(record.page.normalizedPath),
-      },
-    };
+    const normalizedRecord = normalizeKnowledgeRecord(record);
 
     const existingRecords = await this.readRawAll();
     const canonicalRecords = canonicalizeRecords([...existingRecords, normalizedRecord]);
@@ -148,6 +152,6 @@ export class KnowledgeStore {
     return contents
       .split(/\r?\n/)
       .filter((line) => line.trim().length > 0)
-      .map((line, index) => parseKnowledgeLine(line, index + 1));
+      .map((line, index) => normalizeKnowledgeRecord(parseKnowledgeLine(line, index + 1)));
   }
 }
