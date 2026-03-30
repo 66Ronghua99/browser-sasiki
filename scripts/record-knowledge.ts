@@ -5,6 +5,7 @@ import process from "node:process";
 import { readCliArgs } from "../lib/cli.js";
 import { defaultRuntimeRoots } from "../lib/paths.js";
 import { KnowledgeStore } from "../lib/knowledge-store.js";
+import { normalizePagePath } from "../lib/page-identity.js";
 
 function cliString(args: Record<string, string | boolean>, key: string): string | undefined {
   const value = args[key];
@@ -44,7 +45,7 @@ export async function runRecordKnowledgeCommand(args: Record<string, string | bo
     id: cliString(args, "id") ?? `knowledge_${randomUUID()}`,
     page: {
       origin,
-      normalizedPath,
+      normalizedPath: normalizePagePath(normalizedPath),
     },
     guide,
     keywords,

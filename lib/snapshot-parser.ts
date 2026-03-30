@@ -14,8 +14,6 @@ export interface ParsedSnapshotText {
 }
 
 const SNAPSHOT_SECTION = "### Snapshot";
-const ELEMENT_LINE_PATTERN =
-  /^-\s+(?:(?<role>[A-Za-z][\w-]*)\s+)?(?:"(?<quoted>(?:\\.|[^"])*)"|(?<bare>.+?))(?:\s+\[ref=(?<ref>[^\]]+)\])?$/;
 
 function unescapeQuotedText(value: string): string {
   return value.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
@@ -55,31 +53,65 @@ function snapshotBodyLines(snapshotText: string): Array<{ lineNumber: number; ra
   return body;
 }
 
+function stripDecorators(line: string): { body: string; ref: string | null } | null {
+  let content = line.trim();
+  if (!content.startsWith("- ")) {
+    return null;
+  }
+
+  content = content.slice(2).trim();
+  content = content.replace(/^<changed>\s*/i, "");
+
+  const refMatch = content.match(/\[ref=([^\]\s]+)\]/i);
+  const ref = refMatch?.[1]?.trim() || null;
+
+  const body = content
+    .replace(/\s+\[[^\]]+\]/g, " ")
+    .replace(/\s*:\s*$/, "")
+    .trim();
+
+  return {
+    body,
+    ref,
+  };
+}
+
+function parseElementBody(body: string): { role: string | null; text: string } | null {
+  const match = body.match(/^(?:(?<role>[A-Za-z][\w-]*)\s+)?(?:"(?<quoted>(?:\\.|[^"])*)"|(?<bare>.+?))\s*$/);
+  if (!match?.groups) {
+    return null;
+  }
+
+  const role = match.groups.role?.trim() || null;
+  const quotedText = match.groups.quoted;
+  const bareText = match.groups.bare?.trim() ?? "";
+  const text = quotedText ? unescapeQuotedText(quotedText) : bareText;
+
+  return {
+    role,
+    text,
+  };
+}
+
 export function parseSnapshotElements(snapshotText: string): ParsedSnapshotElement[] {
   return snapshotBodyLines(snapshotText)
     .map(({ lineNumber, raw }): ParsedSnapshotElement | null => {
-      const trimmed = raw.trim();
-      if (!trimmed.startsWith("- ")) {
+      const stripped = stripDecorators(raw);
+      if (!stripped) {
         return null;
       }
 
-      const match = trimmed.match(ELEMENT_LINE_PATTERN);
-      if (!match?.groups) {
+      const parsed = parseElementBody(stripped.body);
+      if (!parsed) {
         return null;
       }
-
-      const role = match.groups.role?.trim() ?? null;
-      const quotedText = match.groups.quoted;
-      const bareText = match.groups.bare?.trim() ?? "";
-      const text = quotedText ? unescapeQuotedText(quotedText) : bareText;
-      const ref = match.groups.ref?.trim() || null;
 
       return {
         lineNumber,
         raw,
-        role,
-        text,
-        ref,
+        role: parsed.role,
+        text: parsed.text,
+        ref: stripped.ref,
       };
     })
     .filter((element): element is ParsedSnapshotElement => element !== null);

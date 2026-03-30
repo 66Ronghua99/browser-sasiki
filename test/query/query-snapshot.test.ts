@@ -12,6 +12,7 @@ const snapshotText = [
   "### Snapshot",
   "```yaml",
   "- button \"Customer messages\" [ref=msg]",
+  "- tab \"未分配\" [active] [selected] [ref=e193] [cursor=pointer]:",
   "- text \"No chats yet\"",
   "```",
 ].join("\n");
@@ -40,10 +41,40 @@ test("querySnapshotText search mode finds matching snapshot elements", () => {
   assert.equal(result.matches[0].role, "button");
 });
 
+test("querySnapshotText search mode parses ref-bearing YAML lines with extra attributes", () => {
+  const result = querySnapshotText({
+    snapshotText,
+    mode: "search",
+    ref: "e193",
+  });
+
+  assert.equal(result.mode, "search");
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].ref, "e193");
+  assert.equal(result.matches[0].role, "tab");
+  assert.equal(result.matches[0].text, "未分配");
+});
+
 test("querySnapshotText auto mode falls back to full snapshot content without knowledge", () => {
   const result = querySnapshotText({
     snapshotText,
     mode: "auto",
+  });
+
+  assert.equal(result.mode, "full");
+  assert.equal(result.snapshotText, snapshotText);
+});
+
+test("querySnapshotText auto mode falls back to full snapshot content when knowledge is stale", () => {
+  const result = querySnapshotText({
+    snapshotText,
+    mode: "auto",
+    knowledgeHits: [
+      {
+        guide: "Use the footer export button.",
+        keywords: ["archive", "download"],
+      },
+    ],
   });
 
   assert.equal(result.mode, "full");

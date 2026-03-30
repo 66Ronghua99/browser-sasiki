@@ -4,6 +4,7 @@ import path from "node:path";
 import { readCliArgs } from "../lib/cli.js";
 import { defaultRuntimeRoots } from "../lib/paths.js";
 import { KnowledgeStore } from "../lib/knowledge-store.js";
+import { normalizePagePath } from "../lib/page-identity.js";
 
 function cliString(args: Record<string, string | boolean>, key: string): string | undefined {
   const value = args[key];
@@ -25,14 +26,14 @@ export async function runReadKnowledgeCommand(args: Record<string, string | bool
   const store = resolveStore(args);
   const knowledge = await store.queryByPage({
     origin,
-    normalizedPath,
+    normalizedPath: normalizePagePath(normalizedPath),
   });
 
   return {
     ok: true as const,
     page: {
       origin,
-      normalizedPath,
+      normalizedPath: normalizePagePath(normalizedPath),
     },
     knowledge,
   };

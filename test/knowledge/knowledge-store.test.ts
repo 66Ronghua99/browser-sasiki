@@ -5,6 +5,8 @@ import test from "node:test";
 import { mkdtemp } from "node:fs/promises";
 
 import { KnowledgeStore } from "../../lib/knowledge-store.js";
+import { runReadKnowledgeCommand } from "../../scripts/read-knowledge.js";
+import { runRecordKnowledgeCommand } from "../../scripts/record-knowledge.js";
 
 test("KnowledgeStore appends page knowledge and reads it back by exact page", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-knowledge-"));
@@ -49,4 +51,31 @@ test("KnowledgeStore appends page knowledge and reads it back by exact page", as
   assert.equal(matches[0].id, "k1");
   assert.equal(matches[0].guide, "Check the queue header first.");
   assert.deepEqual(matches[0].keywords, ["Customer messages", "No chats yet"]);
+});
+
+test("record and read knowledge normalize trailing slash page paths", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-knowledge-"));
+  const storePath = path.join(root, "page-knowledge.jsonl");
+
+  const recordResult = await runRecordKnowledgeCommand({
+    "knowledge-file": storePath,
+    origin: "https://example.com",
+    path: "/chat/inbox/current/",
+    guide: "Inspect the message list first.",
+    keywords: "inbox,message list",
+  });
+
+  assert.equal(recordResult.ok, true);
+  assert.equal(recordResult.record.page.normalizedPath, "/chat/inbox/current");
+
+  const readResult = await runReadKnowledgeCommand({
+    "knowledge-file": storePath,
+    origin: "https://example.com",
+    path: "/chat/inbox/current",
+  });
+
+  assert.equal(readResult.ok, true);
+  assert.equal(readResult.page.normalizedPath, "/chat/inbox/current");
+  assert.equal(readResult.knowledge.length, 1);
+  assert.equal(readResult.knowledge[0].page.normalizedPath, "/chat/inbox/current");
 });

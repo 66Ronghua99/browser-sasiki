@@ -2,6 +2,8 @@ import fs from "node:fs";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
+import { normalizePagePath } from "./page-identity.js";
+
 export interface DurableKnowledgePageRef {
   origin: string;
   normalizedPath: string;
@@ -103,7 +105,7 @@ export class KnowledgeStore {
     return allRecords.filter(
       (record) =>
         record.page.origin === page.origin &&
-        record.page.normalizedPath === page.normalizedPath
+        record.page.normalizedPath === normalizePagePath(page.normalizedPath)
     );
   }
 }

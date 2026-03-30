@@ -1,4 +1,4 @@
-import { pageIdentityFromSnapshotText } from "./page-identity.js";
+import { normalizePagePath, pageIdentityFromSnapshotText } from "./page-identity.js";
 import { parseSnapshotText, type ParsedSnapshotElement } from "./snapshot-parser.js";
 import type { KnowledgeHit, SkillPageIdentity } from "./types.js";
 
@@ -85,7 +85,14 @@ function toMatch(element: ParsedSnapshotElement): SnapshotQueryMatch {
 }
 
 function defaultPageFromSnapshot(snapshotText: string, explicitPage?: SkillPageIdentity): SkillPageIdentity {
-  return explicitPage ?? pageIdentityFromSnapshotText(snapshotText);
+  if (explicitPage) {
+    return {
+      ...explicitPage,
+      normalizedPath: normalizePagePath(explicitPage.normalizedPath),
+    };
+  }
+
+  return pageIdentityFromSnapshotText(snapshotText);
 }
 
 export function querySnapshotText(input: SnapshotQueryInput): SnapshotQueryResult {
@@ -111,6 +118,16 @@ export function querySnapshotText(input: SnapshotQueryInput): SnapshotQueryResul
     input.mode === "auto" && input.text === undefined && input.role === undefined && input.ref === undefined
       ? parsedSnapshot.elements.filter((element) => matchesKnowledge(element, knowledgeHits))
       : explicitMatches;
+
+  if (input.mode === "auto" && knowledgeHits.length > 0 && matches.length === 0) {
+    return {
+      mode: "full",
+      page,
+      snapshotText: input.snapshotText,
+      knowledgeHits,
+      summary: "Knowledge cues did not match the snapshot; returning the full snapshot content.",
+    };
+  }
 
   return {
     mode: "search",
