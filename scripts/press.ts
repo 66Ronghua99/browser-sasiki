@@ -1,6 +1,6 @@
 import process from "node:process";
 
-import { readCliArgs } from "../lib/cli.js";
+import { isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
 import {
   requireCliStringArg,
   runBrowserAction,
@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isDirectCliInvocation(import.meta.url, process.argv[1])) {
   void main().catch((error: unknown) => {
     const message = error instanceof Error ? error.stack ?? error.message : String(error);
     process.stderr.write(`${message}\n`);
