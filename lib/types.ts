@@ -4,8 +4,8 @@ export interface SkillPageIdentity {
   title: string;
 }
 
-export interface SkillTabSummary {
-  tabRef: string;
+export interface SkillTabInventoryItem {
+  index: number;
   title: string;
   url: string;
   active: boolean;
@@ -17,19 +17,22 @@ export interface KnowledgeHit {
   rationale?: string;
 }
 
-export interface CaptureResult {
+export interface SkillResultBase {
   ok: true;
   tabRef: string;
   page: SkillPageIdentity;
   snapshotPath: string;
   knowledgeHits: KnowledgeHit[];
-  tabs: SkillTabSummary[];
   summary: string;
+}
+
+export interface CaptureResult extends SkillResultBase {
+  tabs: SkillTabInventoryItem[];
 }
 
 export type SkillAction = "navigate" | "click" | "type" | "press" | "select-tab";
 
-export interface ActionResult extends CaptureResult {
+export interface ActionResult extends SkillResultBase {
   action: SkillAction;
 }
 
@@ -71,9 +74,23 @@ function assertKnowledgeHits(value: unknown): asserts value is KnowledgeHit[] {
   }
 }
 
-function assertTabSummary(tab: unknown, index: number): asserts tab is SkillTabSummary {
+function assertBaseResult(result: unknown): asserts result is SkillResultBase {
+  assertRecord(result, "result");
+  if (result.ok !== true) {
+    throw new TypeError("ok must be true");
+  }
+  assertString(result.tabRef, "tabRef");
+  assertPageIdentity(result.page);
+  assertString(result.snapshotPath, "snapshotPath");
+  assertKnowledgeHits(result.knowledgeHits);
+  assertString(result.summary, "summary");
+}
+
+function assertTabInventoryItem(tab: unknown, index: number): asserts tab is SkillTabInventoryItem {
   assertRecord(tab, `tabs[${index}]`);
-  assertString(tab.tabRef, `tabs[${index}].tabRef`);
+  if (typeof tab.index !== "number" || !Number.isInteger(tab.index) || tab.index < 0) {
+    throw new TypeError(`tabs[${index}].index must be a non-negative integer`);
+  }
   assertString(tab.title, `tabs[${index}].title`);
   assertString(tab.url, `tabs[${index}].url`);
   if (typeof tab.active !== "boolean") {
@@ -81,47 +98,27 @@ function assertTabSummary(tab: unknown, index: number): asserts tab is SkillTabS
   }
 }
 
-function assertTabs(value: unknown): asserts value is SkillTabSummary[] {
+function assertTabs(value: unknown): asserts value is SkillTabInventoryItem[] {
   if (!Array.isArray(value)) {
     throw new TypeError("tabs must be an array");
   }
-  value.forEach((tab, index) => assertTabSummary(tab, index));
-}
-
-function assertCaptureShape(result: unknown): asserts result is CaptureResult {
-  assertRecord(result, "result");
-  if (result.ok !== true) {
-    throw new TypeError("ok must be true");
-  }
-  assertString(result.tabRef, "tabRef");
-  assertPageIdentity(result.page);
-  assertString(result.snapshotPath, "snapshotPath");
-  assertKnowledgeHits(result.knowledgeHits);
-  assertTabs(result.tabs);
-  assertString(result.summary, "summary");
+  value.forEach((tab, index) => assertTabInventoryItem(tab, index));
 }
 
 export function assertCaptureResult(result: unknown): asserts result is CaptureResult {
-  assertCaptureShape(result);
+  assertBaseResult(result);
+  assertTabs((result as CaptureResult).tabs);
 }
 
 export function assertActionResult(result: unknown): asserts result is ActionResult {
-  assertRecord(result, "result");
-  if (result.ok !== true) {
-    throw new TypeError("ok must be true");
-  }
-  assertString(result.snapshotPath, "snapshotPath");
-  assertString(result.tabRef, "tabRef");
-  assertPageIdentity(result.page);
-  assertKnowledgeHits(result.knowledgeHits);
-  assertTabs(result.tabs);
-  assertString(result.summary, "summary");
+  assertBaseResult(result);
+  const action = (result as unknown as Record<string, unknown>).action;
   if (
-    result.action !== "navigate" &&
-    result.action !== "click" &&
-    result.action !== "type" &&
-    result.action !== "press" &&
-    result.action !== "select-tab"
+    action !== "navigate" &&
+    action !== "click" &&
+    action !== "type" &&
+    action !== "press" &&
+    action !== "select-tab"
   ) {
     throw new TypeError("action must be one of navigate, click, type, press, select-tab");
   }

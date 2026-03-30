@@ -19,7 +19,7 @@ const captureBase = {
   knowledgeHits: [],
   tabs: [
     {
-      tabRef: "tab_demo",
+      index: 0,
       title: "Dashboard",
       url: "https://example.com/dashboard",
       active: true,
@@ -42,6 +42,20 @@ test("capture result requires tabRef, snapshotPath, and page identity", () => {
       }),
     /tabs/
   );
+  assert.throws(
+    () =>
+      assertCaptureResult({
+        ...captureBase,
+        tabs: [
+          {
+            title: "Dashboard",
+            url: "https://example.com/dashboard",
+            active: true,
+          },
+        ],
+      }),
+    /index/
+  );
 });
 
 test("default runtime roots keep temp state outside the portable skill folder", () => {
@@ -57,22 +71,32 @@ test("default runtime roots keep temp state outside the portable skill folder", 
   }
 });
 
-test("mutation result requires explicit tabRef and snapshotPath", () => {
+test("mutation result requires explicit base fields and rejects invalid actions", () => {
   assert.throws(
     () => assertActionResult({ ok: true, action: "click" }),
-    /snapshotPath/
+    /tabRef/
   );
   assert.throws(
     () =>
       assertActionResult({
-        ...captureBase,
+        ok: true as const,
+        tabRef: "tab_demo",
+        page: captureBase.page,
+        snapshotPath: "/tmp/snapshot.md",
+        knowledgeHits: [],
+        summary: "ready",
         action: "drag" as never,
       }),
     /action/
   );
   assert.doesNotThrow(() =>
     assertActionResult({
-      ...captureBase,
+      ok: true as const,
+      tabRef: "tab_demo",
+      page: captureBase.page,
+      snapshotPath: "/tmp/snapshot.md",
+      knowledgeHits: [],
+      summary: "ready",
       action: "click",
     })
   );
