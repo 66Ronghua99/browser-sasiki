@@ -15,7 +15,15 @@ Use it whenever the underlying job is browser automation: navigating a site, cli
 
 ## How To Start
 
-Make sure the target Chrome session is already running with remote debugging enabled, and allow Chrome DevTools MCP to attach if Chrome asks. Then start with `node dist/scripts/capture.js --tab-ref <tabRef>`. That establishes a trustworthy browser context for the current task. If you do not already have a valid bound context, capture first and continue from there. If capture fails because Chrome is not attachable, open `chrome://inspect/#remote-debugging` in Chrome, turn remote debugging on, allow the MCP connection if prompted, and then retry capture.
+Make sure the target Chrome session is already running with remote debugging enabled, and allow Chrome DevTools MCP to attach if Chrome asks. Then start with `node dist/scripts/capture.js --tab-ref <tabRef>`. That establishes a trustworthy browser context for the current task.
+
+Default capture behavior is now workspace-oriented:
+
+- first `capture --tab-ref <tabRef>` creates a new workspace tab for that agent context
+- later `capture --tab-ref <same-tabRef>` refreshes that existing bound tab
+- binding an already open tab requires explicit intent through `--tab-index` on `capture` or `select-tab` later
+
+If capture fails because Chrome is not attachable, open `chrome://inspect/#remote-debugging` in Chrome, turn remote debugging on, allow the MCP connection if prompted, and then retry capture.
 
 ## Work Model
 
@@ -35,7 +43,56 @@ At the CLI level, the skill currently exposes these commands:
 - `node dist/scripts/read-knowledge.js --origin <origin> --normalized-path <path>`
 - `node dist/scripts/record-knowledge.js --origin <origin> --normalized-path <path> --guide <text> [--keywords <comma-separated>]`
 
-Use the README as the denser operator-facing reference for installation and exact command details. After installation, call the compiled `dist/scripts/*.js` entrypoints rather than the `.ts` source files. For snapshot retrieval, treat `query-snapshot.js` as the single local front door; prefer `--uid` selectors from the latest snapshot. `click.js`, `type.js`, and `query-snapshot.js` still accept legacy `--ref` during migration, and `select-tab.js` still accepts legacy `--index`, but the canonical names are `--uid` and `--page-id`.
+Use the README as the denser operator-facing reference for installation and exact command details. After installation, call the compiled `dist/scripts/*.js` entrypoints rather than the `.ts` source files.
+
+### Argument Meanings
+
+- `tabRef`: the agent-facing logical workspace handle. It points to one bound Chrome tab and its latest snapshot.
+- `snapshotRef`: the daemon-generated handle for a stored snapshot. Prefer this over `snapshotPath` in new flows.
+- `uid`: the Chrome DevTools accessibility-tree element handle from the latest snapshot. This is the canonical element selector.
+- `page-id`: the Chrome DevTools page handle used by `list_pages` / `select_page`.
+- `tab-index`: capture-only explicit override for binding an already open tab instead of creating a new workspace tab.
+
+### Command Details
+
+- `capture.js`
+  - purpose: create or refresh an agent workspace
+  - recommended: `--tab-ref <tabRef>`
+  - optional: `--tab-index <page-id>` to bind an already open tab explicitly
+  - default behavior: first use for a new `tabRef` opens a new workspace tab
+- `navigate.js`
+  - required: `--tab-ref`, `--url`
+  - purpose: navigate the bound workspace tab to an absolute URL
+- `click.js`
+  - required: `--tab-ref`, `--uid`
+  - alias: `--ref` remains accepted during migration
+  - purpose: click an element from the latest snapshot
+- `type.js`
+  - required: `--tab-ref`, `--uid`, `--text`
+  - alias: `--ref` remains accepted during migration
+  - note: `submit` is still an explicit failure path in the current daemon-backed contract; use a follow-up `press.js` instead
+- `press.js`
+  - required: `--tab-ref`, `--key`
+  - purpose: send a keyboard action to the bound tab
+- `select-tab.js`
+  - required: `--tab-ref`, `--page-id`
+  - aliases: `--index`, `--tab-index`
+  - purpose: rebind a workspace to another already open Chrome page
+- `query-snapshot.js`
+  - required: `--mode`
+  - requires one snapshot source: `--tab-ref`, `--snapshot-ref`, `--snapshot-path`, or `--snapshot-text`
+  - `search` mode also requires at least one selector: `--query` / `--text`, `--role`, `--uid`, or `--ref`
+  - only `full` results, or `auto` when it truly falls back to full, should include `snapshotText`
+  - `--knowledge-file` is no longer accepted on the daemon-backed path
+- `read-knowledge.js`
+  - daemon path: use `--tab-ref`, `--snapshot-ref`, `--knowledge-ref`, or `--origin` + `--normalized-path`
+  - standalone compatibility path: `--knowledge-file` only when you are intentionally bypassing runtime state
+- `record-knowledge.js`
+  - required: `--origin`, `--normalized-path`, `--guide`, `--keywords`
+  - optional runtime hints: `--tab-ref`, `--snapshot-ref`, `--knowledge-ref`, `--rationale`
+  - standalone compatibility path: `--knowledge-file` only when there is no `tabRef` or `snapshotRef`
+
+For snapshot retrieval, treat `query-snapshot.js` as the single local front door and prefer `--uid` selectors from the latest snapshot. `click.js`, `type.js`, and `query-snapshot.js` still accept legacy `--ref` during migration, and `select-tab.js` still accepts legacy `--index`, but the canonical names are `--uid` and `--page-id`.
 
 ## Practical Rules
 

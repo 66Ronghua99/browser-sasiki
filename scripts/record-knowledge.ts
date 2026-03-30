@@ -2,7 +2,6 @@ import process from "node:process";
 
 import {
   formatCliError,
-  hasSessionRpcRequestSenderOverride,
   isDirectCliInvocation,
   readCliArgs,
   sendSessionRpcRequest,
@@ -71,6 +70,7 @@ export async function runRecordKnowledgeCommand(args: Record<string, string | bo
   const knowledgeRef = cliMaybeKnowledgeRef(args);
   const knowledgeId = cliString(args, "id") ?? knowledgeRef;
   const knowledgeFile = cliString(args, "knowledge-file");
+  const useStandaloneKnowledgeFile = knowledgeFile !== undefined && snapshotRef === undefined && tabRef === undefined;
 
   if (!origin || !normalizedPath) {
     throw new Error("record-knowledge requires --origin and --normalized-path");
@@ -88,7 +88,7 @@ export async function runRecordKnowledgeCommand(args: Record<string, string | bo
     title: cliTitle(args),
   };
 
-  if (knowledgeFile && !hasSessionRpcRequestSenderOverride()) {
+  if (useStandaloneKnowledgeFile) {
     const createdAt = new Date().toISOString();
     const record = {
       id: knowledgeId ?? `knowledge_${Date.now()}`,

@@ -117,6 +117,10 @@ export class McpBrowserClient {
     return this.readTextToolResult("list_pages", {});
   }
 
+  async newPage(url: string, background = false): Promise<string> {
+    return this.readTextToolResult("new_page", background ? { url, background } : { url });
+  }
+
   async selectPage(pageId: number, bringToFront = true): Promise<string> {
     return this.readTextToolResult("select_page", { pageId, bringToFront });
   }

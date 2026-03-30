@@ -231,16 +231,17 @@ test("query-snapshot resolves the latest bound snapshot from --tab-ref", async (
         "tab-ref": "tab_demo",
         mode: "search",
         query: "Customer messages",
-        "knowledge-file": harness.knowledgeFile,
       }),
     );
 
     assert.equal(requests.length, 1);
     assert.equal(requests[0]?.method, "querySnapshot");
     assert.equal(requests[0]?.params.tabRef, "tab_demo");
+    assert.equal("includeSnapshot" in (requests[0]?.params ?? {}), false);
     assertSearchResult(result);
     assert.equal(result.matches.length, 1);
     assert.equal(result.matches[0]?.uid, "1_1");
+    assert.equal("snapshotText" in result, false);
   } finally {
     setSessionRpcRequestSenderForTesting(undefined);
   }
@@ -289,10 +290,63 @@ test("query-snapshot accepts --snapshot-ref and delegates to the session seam", 
     assert.equal(requests.length, 1);
     assert.equal(requests[0]?.method, "querySnapshot");
     assert.equal(requests[0]?.params.snapshotRef, "snapshot_demo");
+    assert.equal("includeSnapshot" in (requests[0]?.params ?? {}), false);
     assertSearchResult(result);
     assert.equal(result.matches.length, 1);
     assert.equal(result.matches[0]?.uid, "1_1");
     assert.equal(result.page.normalizedPath, "/chat/inbox/current");
+    assert.equal("snapshotText" in result, false);
+  } finally {
+    setSessionRpcRequestSenderForTesting(undefined);
+  }
+});
+
+test("query-snapshot forwards --role to the daemon-backed session seam", async () => {
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  setSessionRpcRequestSenderForTesting(async (request) => {
+    requests.push({ method: request.method, params: request.params as Record<string, unknown> });
+
+    return {
+      ok: true as const,
+      mode: "search" as const,
+      tabRef: "tab_demo",
+      snapshotRef: "snapshot_demo",
+      snapshotPath: "/tmp/browser-skill/snapshots/snapshot-demo.md",
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/chat/inbox/current",
+        title: "Inbox",
+      },
+      knowledgeHits: [],
+      summary: "resolved by role selector",
+      matches: [
+        {
+          lineNumber: 2,
+          raw: '  uid=1_1 button "Customer messages"',
+          role: "button",
+          text: "Customer messages",
+          uid: "1_1",
+          ref: "1_1",
+        },
+      ],
+    };
+  });
+
+  try {
+    const result = await runQuerySnapshotCommand(
+      parseQuerySnapshotCliArgs({
+        "tab-ref": "tab_demo",
+        mode: "search",
+        role: "button",
+      }),
+    );
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.method, "querySnapshot");
+    assert.equal(requests[0]?.params.tabRef, "tab_demo");
+    assert.equal(requests[0]?.params.role, "button");
+    assertSearchResult(result);
+    assert.equal(result.matches[0]?.role, "button");
   } finally {
     setSessionRpcRequestSenderForTesting(undefined);
   }
@@ -389,6 +443,19 @@ test("query-snapshot rejects invalid --mode values explicitly", () => {
   );
 });
 
+test("query-snapshot rejects legacy --knowledge-file because daemon-backed retrieval owns knowledge hits", () => {
+  assert.throws(
+    () =>
+      parseQuerySnapshotCliArgs({
+        "snapshot-text": snapshotText,
+        mode: "search",
+        query: "Customer messages",
+        "knowledge-file": "/tmp/browser-skill/page-knowledge.jsonl",
+      }),
+    /knowledge-file.*daemon|knowledge-file.*supported/i,
+  );
+});
+
 test("query-snapshot rejects bare --mode instead of defaulting silently", () => {
   assert.throws(
     () =>
@@ -423,13 +490,11 @@ test("query-snapshot rejects --mode search without a selector", () => {
 });
 
 test("query-snapshot maps the documented --query alias to text search", async () => {
-  const harness = await createQueryHarness();
   const result = await runQuerySnapshotCommand(
     parseQuerySnapshotCliArgs({
       "snapshot-text": snapshotText,
       mode: "search",
       query: "Customer messages",
-      "knowledge-file": harness.knowledgeFile,
     }),
   );
 
@@ -439,14 +504,11 @@ test("query-snapshot maps the documented --query alias to text search", async ()
 });
 
 test("query-snapshot accepts the documented --uid selector and preserves legacy --ref as an alias", async () => {
-  const harness = await createQueryHarness();
-
   const uidResult = await runQuerySnapshotCommand(
     parseQuerySnapshotCliArgs({
       "snapshot-text": snapshotText,
       mode: "search",
       uid: "1_3",
-      "knowledge-file": harness.knowledgeFile,
     }),
   );
 
@@ -459,7 +521,6 @@ test("query-snapshot accepts the documented --uid selector and preserves legacy 
       "snapshot-text": snapshotText,
       mode: "search",
       ref: "1_3",
-      "knowledge-file": harness.knowledgeFile,
     }),
   );
 
@@ -509,16 +570,17 @@ test("query-snapshot still supports explicit --snapshot-path after parser valida
         "snapshot-path": snapshotPath,
         mode: "search",
         query: "Customer messages",
-        "knowledge-file": harness.knowledgeFile,
       }),
     );
 
     assert.equal(requests.length, 1);
     assert.equal(requests[0]?.method, "querySnapshot");
     assert.equal(requests[0]?.params.snapshotPath, snapshotPath);
+    assert.equal("includeSnapshot" in (requests[0]?.params ?? {}), false);
     assertSearchResult(result);
     assert.equal(result.matches.length, 1);
     assert.equal(result.matches[0]?.uid, "1_1");
+    assert.equal("snapshotText" in result, false);
   } finally {
     setSessionRpcRequestSenderForTesting(undefined);
   }

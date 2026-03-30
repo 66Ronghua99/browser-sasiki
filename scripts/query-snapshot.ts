@@ -17,7 +17,6 @@ export interface QuerySnapshotCliArgs {
   role?: string;
   uid?: string;
   ref?: string;
-  knowledgeFile?: string;
   origin?: string;
   path?: string;
   title?: string;
@@ -65,11 +64,14 @@ export function parseQuerySnapshotCliArgs(args: Record<string, string | boolean>
   const role = optionalCliStringArg(args, "role", "role");
   const uid = optionalCliStringArg(args, "uid", "uid");
   const ref = optionalCliStringArg(args, "ref", "ref");
-  const knowledgeFile = optionalCliStringArg(args, "knowledge-file", "knowledgeFile");
   const origin = optionalCliStringArg(args, "origin", "origin");
   const normalizedPath = optionalCliStringArg(args, "path", "path");
   const title = optionalCliStringArg(args, "title", "title");
   const modeValue = requireCliStringArg(args, "mode", "mode");
+
+  if (optionalCliStringArg(args, "knowledge-file", "knowledgeFile") !== undefined) {
+    throw new Error("query-snapshot no longer accepts --knowledge-file; daemon-backed retrieval owns knowledge hits");
+  }
 
   if (tabRef === undefined && snapshotRef === undefined && snapshotPath === undefined && snapshotText === undefined) {
     throw new Error("query-snapshot requires --tab-ref, --snapshot-ref, --snapshot-path, or --snapshot-text");
@@ -97,7 +99,6 @@ export function parseQuerySnapshotCliArgs(args: Record<string, string | boolean>
     role,
     uid: handleSelector.uid,
     ref: handleSelector.ref,
-    knowledgeFile,
     origin,
     path: normalizedPath,
     title,
@@ -111,12 +112,12 @@ function buildSnapshotQueryRequest(args: QuerySnapshotCliArgs): SessionRpcReques
     ...(args.snapshotPath !== undefined ? { snapshotPath: path.resolve(args.snapshotPath) } : {}),
     mode: args.mode,
     ...(args.text !== undefined ? { query: args.text } : {}),
+    ...(args.role !== undefined ? { role: args.role } : {}),
     ...(args.uid !== undefined ? { uid: args.uid } : {}),
-    includeSnapshot: true,
   };
 }
 
-function resolveSessionQueryResult(args: QuerySnapshotCliArgs, value: unknown): ReturnType<typeof querySnapshotText> {
+function resolveSessionQueryResult(value: unknown): ReturnType<typeof querySnapshotText> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("querySnapshot session response must be an object");
   }
@@ -126,24 +127,7 @@ function resolveSessionQueryResult(args: QuerySnapshotCliArgs, value: unknown): 
     return value as ReturnType<typeof querySnapshotText>;
   }
 
-  if (typeof result.snapshotText === "string") {
-    const page =
-      typeof result.page === "object" && result.page !== null
-        ? (result.page as ReturnType<typeof pageIdentityFromSnapshotText>)
-        : pageIdentityFromSnapshotText(result.snapshotText);
-    return querySnapshotText({
-      snapshotText: result.snapshotText,
-      mode: args.mode,
-      text: args.text,
-      role: args.role,
-      uid: args.uid,
-      ref: args.ref,
-      knowledgeHits: Array.isArray(result.knowledgeHits) ? (result.knowledgeHits as ReturnType<typeof querySnapshotText>["knowledgeHits"]) : [],
-      page,
-    });
-  }
-
-  throw new Error("querySnapshot session response must include snapshotText or a completed query result");
+  throw new Error("querySnapshot session response must be a completed query result");
 }
 
 export async function runQuerySnapshotCommand(args: QuerySnapshotCliArgs): Promise<ReturnType<typeof querySnapshotText>> {
@@ -173,7 +157,7 @@ export async function runQuerySnapshotCommand(args: QuerySnapshotCliArgs): Promi
   }
 
   const sessionResult = await sendSessionRpcRequest("querySnapshot", buildSnapshotQueryRequest(args));
-  return resolveSessionQueryResult(args, sessionResult);
+  return resolveSessionQueryResult(sessionResult);
 }
 
 async function main(): Promise<void> {

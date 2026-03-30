@@ -132,7 +132,7 @@ test("session rpc contract freezes the daemon method names and metadata keys", (
     type: ["tabRef", "uid", "text"],
     press: ["tabRef", "key"],
     selectTab: ["tabRef", "pageId"],
-    querySnapshot: ["tabRef", "snapshotRef", "snapshotPath", "mode", "query", "uid", "includeSnapshot"],
+    querySnapshot: ["tabRef", "snapshotRef", "snapshotPath", "mode", "query", "role", "uid", "includeSnapshot"],
     readKnowledge: ["tabRef", "snapshotRef", "snapshotPath", "knowledgeRef", "page"],
     recordKnowledge: ["tabRef", "snapshotRef", "snapshotPath", "page", "guide", "keywords", "rationale", "knowledgeRef"],
     shutdown: [],
@@ -339,6 +339,7 @@ async function createSessionClientHarness(): Promise<{
         createMcpBridge: async () => ({
           close: async () => {},
           listPages: async () => "## Pages\n1: https://example.com [selected]",
+          newPage: async () => "## Pages\n1: chrome://newtab/ [selected]",
           captureSnapshot: async () => "## Snapshot\nuid=1_0 RootWebArea \"Example\"",
           callTool: async () => ({ content: [{ type: "text", text: "ok" }] }),
         }),

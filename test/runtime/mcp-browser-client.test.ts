@@ -166,6 +166,16 @@ test("mcp browser client selects Chrome DevTools pages through select_page", asy
   assert.deepEqual(toolClient.calls, [{ name: "select_page", args: { pageId: 2, bringToFront: true } }]);
 });
 
+test("mcp browser client opens a new workspace tab through new_page", async () => {
+  const toolClient = new StubToolClient();
+  const client = new McpBrowserClient(toolClient);
+
+  const pagesText = await client.newPage("chrome://newtab/");
+
+  assert.equal(pagesText, "called:new_page");
+  assert.deepEqual(toolClient.calls, [{ name: "new_page", args: { url: "chrome://newtab/" } }]);
+});
+
 test("mcp browser client rejects take_snapshot error payloads", async () => {
   const toolClient = new StubToolClient();
   toolClient.callTool = async (name: string, args: Record<string, unknown>): Promise<ToolCallResult> => {
@@ -184,7 +194,7 @@ test("mcp browser client rejects take_snapshot error payloads", async () => {
 
   await assert.rejects(
     () => client.captureSnapshot(),
-    /take_snapshot could not attach to the running Chrome session/i
+    /take_snapshot could not attach to the running Chrome session/i,
   );
   assert.deepEqual(toolClient.calls, [{ name: "take_snapshot", args: {} }]);
 });
@@ -249,7 +259,7 @@ test("mcp browser client rejects malformed take_snapshot success payloads", asyn
 
   await assert.rejects(
     () => client.captureSnapshot(),
-    /take_snapshot returned a malformed payload/i
+    /take_snapshot returned a malformed payload/i,
   );
 });
 

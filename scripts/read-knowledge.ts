@@ -2,7 +2,6 @@ import process from "node:process";
 
 import {
   formatCliError,
-  hasSessionRpcRequestSenderOverride,
   isDirectCliInvocation,
   readCliArgs,
   sendSessionRpcRequest,
@@ -72,8 +71,9 @@ export async function runReadKnowledgeCommand(args: Record<string, string | bool
   const tabRef = cliMaybeTabRef(args);
   const page = buildPage(args);
   const knowledgeFile = cliString(args, "knowledge-file");
+  const useStandaloneKnowledgeFile = knowledgeFile !== undefined && snapshotRef === undefined && tabRef === undefined;
 
-  if (knowledgeFile && !hasSessionRpcRequestSenderOverride()) {
+  if (useStandaloneKnowledgeFile) {
     const store = new KnowledgeStore(knowledgeFile);
     if (knowledgeId || knowledgeRef) {
       return {

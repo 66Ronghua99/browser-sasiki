@@ -39,6 +39,7 @@ const DEFAULT_SNAPSHOT_TTL_MS = 12 * 60 * 60 * 1000;
 interface DaemonBridge {
   close(): Promise<void>;
   listPages(): Promise<string>;
+  newPage(url: string, background?: boolean): Promise<string>;
   captureSnapshot(): Promise<string>;
   callTool(name: string, args: Record<string, unknown>): Promise<ToolCallResultLike>;
 }
@@ -113,6 +114,20 @@ export class BrowserSessionDaemon {
           throw new Error("unable to identify the current page from list_pages output");
         }
         return activeTab.index;
+      },
+      openWorkspaceTab: async () => {
+        const bridge = await this.ensureBridge();
+        const pageListText = await bridge.newPage("chrome://newtab/", false);
+        const activeTab = parseTabInventory(pageListText).find((tab) => tab.active);
+        if (activeTab) {
+          return activeTab.index;
+        }
+        const fallbackPageListText = await bridge.listPages();
+        const fallbackActiveTab = parseTabInventory(fallbackPageListText).find((tab) => tab.active);
+        if (!fallbackActiveTab) {
+          throw new Error("unable to identify the new workspace tab from new_page output");
+        }
+        return fallbackActiveTab.index;
       },
     };
     this.actionDeps = {
@@ -291,6 +306,7 @@ export class BrowserSessionDaemon {
       snapshotText: resolved.snapshotText,
       mode: params.mode ?? "auto",
       text: params.query,
+      role: params.role,
       uid: params.uid,
       ref: params.uid,
       knowledgeHits,
@@ -426,6 +442,7 @@ export class BrowserSessionDaemon {
     this.browserBridge = {
       close: connected.close,
       listPages: async () => connected.client.listPages(),
+      newPage: async (url, background) => connected.client.newPage(url, background),
       captureSnapshot: async () => runtime.captureSnapshot(),
       callTool: async (name, args) => runtime.callBrowserTool(name, args),
     };

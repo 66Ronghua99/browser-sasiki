@@ -24,7 +24,7 @@ export const SESSION_RPC_REQUEST_FIELDS = {
   type: ["tabRef", "uid", "text"],
   press: ["tabRef", "key"],
   selectTab: ["tabRef", "pageId"],
-  querySnapshot: ["tabRef", "snapshotRef", "snapshotPath", "mode", "query", "uid", "includeSnapshot"],
+  querySnapshot: ["tabRef", "snapshotRef", "snapshotPath", "mode", "query", "role", "uid", "includeSnapshot"],
   readKnowledge: ["tabRef", "snapshotRef", "snapshotPath", "knowledgeRef", "page"],
   recordKnowledge: ["tabRef", "snapshotRef", "snapshotPath", "page", "guide", "keywords", "rationale", "knowledgeRef"],
   shutdown: [],
@@ -65,6 +65,7 @@ export interface SessionRpcRequestMap {
     snapshotPath?: string;
     mode?: "search" | "auto" | "full";
     query?: string;
+    role?: string;
     uid?: string;
     includeSnapshot?: boolean;
   };
@@ -275,6 +276,9 @@ function assertSessionRpcParams(method: SessionRpcMethod, params: unknown): asse
       }
       if (params.query !== undefined) {
         assertString(params.query, "params.query");
+      }
+      if (params.role !== undefined) {
+        assertString(params.role, "params.role");
       }
       if (params.uid !== undefined) {
         assertString(params.uid, "params.uid");

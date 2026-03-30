@@ -12,11 +12,13 @@ import { TabBindingStore } from "./tab-binding-store.js";
 import type { ActionResult, CaptureResult, KnowledgeHit, SkillAction, SkillTabInventoryItem } from "./types.js";
 
 const DEFAULT_SNAPSHOT_TTL_MS = 12 * 60 * 60 * 1000;
+const DEFAULT_WORKSPACE_TAB_URL = "chrome://newtab/";
 
 export interface BrowserRuntime {
   captureSnapshot(): Promise<string>;
   callBrowserTool(name: string, args: Record<string, unknown>): Promise<ToolCallResultLike>;
   readActiveTabIndex(): Promise<number>;
+  openWorkspaceTab(): Promise<number>;
 }
 
 export interface BrowserActionDeps {
@@ -59,6 +61,15 @@ export class DefaultBrowserRuntime implements BrowserRuntime {
       throw new Error("unable to identify the current page from list_pages output");
     }
     return activeTab.index;
+  }
+
+  async openWorkspaceTab(): Promise<number> {
+    const pageListText = await this.client.newPage(DEFAULT_WORKSPACE_TAB_URL);
+    const activeTab = parseTabInventory(pageListText).find((tab) => tab.active);
+    if (activeTab) {
+      return activeTab.index;
+    }
+    return this.readActiveTabIndex();
   }
 }
 
@@ -206,17 +217,16 @@ export async function runCaptureFlow(
   await deps.snapshots.cleanupExpired();
 
   const providedTabRef = optionalNonEmptyString(args.tabRef, "tabRef");
-  const resolvedTabIndex = await resolveCaptureTabIndex(args, deps, providedTabRef);
-  const pageListText = await selectCapturedPage(deps.browser, resolvedTabIndex);
+  const captureTarget = await resolveCaptureTarget(args, deps, providedTabRef);
   const rawSnapshotText = await deps.browser.captureSnapshot();
-  const snapshotText = normalizeCapturedSnapshot(pageListText, rawSnapshotText, resolvedTabIndex);
+  const snapshotText = normalizeCapturedSnapshot(captureTarget.pageListText, rawSnapshotText, captureTarget.tabIndex);
   const { snapshotPath } = await deps.snapshots.write(snapshotText);
   const page = pageIdentityFromSnapshotText(snapshotText);
   const tabRef = providedTabRef ?? mintTabRef();
 
   await deps.tabBindings.write({
     tabRef,
-    browserTabIndex: resolvedTabIndex,
+    browserTabIndex: captureTarget.tabIndex,
     snapshotPath,
     page,
   });
@@ -230,9 +240,11 @@ export async function runCaptureFlow(
     tabs: parseTabInventory(snapshotText),
     snapshotPath,
     knowledgeHits,
-    summary: providedTabRef
-      ? `Refreshed ${tabRef} with a fresh snapshot.`
-      : `Captured a fresh snapshot and bound the current tab to ${tabRef}.`,
+    summary: captureTarget.createdWorkspaceTab
+      ? `Captured a fresh snapshot and bound a new workspace tab to ${tabRef}.`
+      : captureTarget.reusedBinding
+        ? `Refreshed ${tabRef} with a fresh snapshot.`
+        : `Captured a fresh snapshot and bound browser tab ${captureTarget.tabIndex} to ${tabRef}.`,
   };
 }
 
@@ -427,27 +439,48 @@ async function createDefaultBrowserActionDeps(): Promise<DisposableBrowserAction
   };
 }
 
-async function resolveCaptureTabIndex(
+async function resolveCaptureTarget(
   args: { tabIndex?: number; tabRef?: string },
   deps: BrowserActionDeps,
   providedTabRef: string | undefined,
-): Promise<number> {
+): Promise<{
+  tabIndex: number;
+  pageListText: string;
+  createdWorkspaceTab: boolean;
+  reusedBinding: boolean;
+}> {
   if (typeof args.tabIndex === "number") {
     if (!Number.isInteger(args.tabIndex) || args.tabIndex < 0) {
       throw new Error("tabIndex must be a non-negative integer");
     }
-    return args.tabIndex;
+    return {
+      tabIndex: args.tabIndex,
+      pageListText: await selectCapturedPage(deps.browser, args.tabIndex),
+      createdWorkspaceTab: false,
+      reusedBinding: false,
+    };
   }
 
   if (providedTabRef) {
     const bindingExists = await deps.tabBindings.exists(providedTabRef);
     if (bindingExists) {
       const existingBinding = await deps.tabBindings.read(providedTabRef);
-      return existingBinding.browserTabIndex;
+      return {
+        tabIndex: existingBinding.browserTabIndex,
+        pageListText: await selectCapturedPage(deps.browser, existingBinding.browserTabIndex),
+        createdWorkspaceTab: false,
+        reusedBinding: true,
+      };
     }
   }
 
-  return deps.browser.readActiveTabIndex();
+  const workspaceTabIndex = await deps.browser.openWorkspaceTab();
+  return {
+    tabIndex: workspaceTabIndex,
+    pageListText: await selectCapturedPage(deps.browser, workspaceTabIndex),
+    createdWorkspaceTab: true,
+    reusedBinding: false,
+  };
 }
 
 async function readKnowledgeHits(

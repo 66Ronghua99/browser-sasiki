@@ -75,6 +75,12 @@ The temp directory is disposable runtime state. The knowledge file is the durabl
 
 Start Chrome yourself first, make sure remote debugging is enabled for that session, and allow Chrome DevTools MCP to attach if Chrome asks. Then start with `capture`. That command starts the daemon if needed, establishes the current browser context, and gives you the handle that the rest of the browser task depends on. Later commands should reuse the same daemon-backed runtime instead of reconnecting from scratch.
 
+The default workspace behavior is now:
+
+- first `capture --tab-ref <tabRef>` creates a new workspace tab for that agent context
+- later `capture --tab-ref <same-tabRef>` refreshes the already bound workspace tab
+- binding an existing tab is explicit through `--tab-index` on `capture` or `select-tab` afterward
+
 Typical sequence:
 
 ```bash
@@ -104,45 +110,141 @@ The main command groups are:
   - `node dist/scripts/read-knowledge.js --origin <origin> --normalized-path <path>`
   - `node dist/scripts/record-knowledge.js --origin <origin> --normalized-path <path> --guide <text> [--keywords <comma-separated>]`
 
+## Argument Glossary
+
+- `tabRef`
+  - agent-facing logical workspace name
+  - points to one bound Chrome tab plus its latest snapshot
+  - examples: `main`, `checkout_worker`, `support_inbox`
+- `snapshotRef`
+  - daemon-generated handle for a stored snapshot
+  - use this when another command should consume a specific captured state without relying on `tabRef`
+- `uid`
+  - element handle from the Chrome DevTools accessibility snapshot
+  - use this for `click` and `type`
+- `page-id`
+  - Chrome DevTools page handle from `list_pages`
+  - use this with `select-tab`
+- `tab-index`
+  - explicit `capture` override for binding an already open tab
+  - this is the opt-in escape hatch when you do want to capture an existing tab instead of creating a new workspace tab
+
 - `capture.js`
-  - required: `--tab-ref`
-  - purpose: establish or refresh the current browser task context
+  - purpose: create or refresh a browser workspace
+  - optional but recommended: `--tab-ref <tabRef>`
+  - optional: `--tab-index <page-id>`
+  - behavior:
+    - with a new `--tab-ref`, opens a new workspace tab by default
+    - with an existing `--tab-ref`, refreshes that binding
+    - with `--tab-index`, binds the specified already open tab instead of creating a new one
+  - example:
+
+```bash
+node dist/scripts/capture.js --tab-ref main
+node dist/scripts/capture.js --tab-ref support --tab-index 3
+```
+
 - `navigate.js`
   - required: `--tab-ref`, `--url`
   - purpose: move the bound browser task to a new URL
+  - example:
+
+```bash
+node dist/scripts/navigate.js --tab-ref main --url https://example.com/dashboard
+```
+
 - `click.js`
   - required: `--tab-ref`, `--uid`
+  - alias: `--ref`
   - purpose: click a known element in the current bound page
+  - example:
+
+```bash
+node dist/scripts/click.js --tab-ref main --uid 7_14
+```
+
 - `type.js`
   - required: `--tab-ref`, `--uid`, `--text`
+  - alias: `--ref`
   - purpose: type into a known element in the current bound page
+  - note: `submit` is still not part of the daemon-backed success path; press Enter explicitly with `press.js`
+  - example:
+
+```bash
+node dist/scripts/type.js --tab-ref main --uid 7_18 --text "hello"
+node dist/scripts/press.js --tab-ref main --key Enter
+```
+
 - `press.js`
   - required: `--tab-ref`, `--key`
   - purpose: send a keyboard action in the current bound page
 - `select-tab.js`
   - required: `--tab-ref`, `--page-id`
+  - aliases: `--index`, `--tab-index`
   - purpose: rebind the task to another browser tab
+  - example:
+
+```bash
+node dist/scripts/select-tab.js --tab-ref main --page-id 4
+```
+
 - `query-snapshot.js`
   - required: `--mode`, plus one snapshot source such as `--tab-ref`
-  - in `search` mode, also require at least one selector such as `--query`, `--role`, or `--uid`
+  - accepted snapshot sources:
+    - `--tab-ref`
+    - `--snapshot-ref`
+    - `--snapshot-path`
+    - `--snapshot-text` for local standalone querying
+  - in `search` mode, also require at least one selector such as `--query` / `--text`, `--role`, `--uid`, or `--ref`
   - purpose: retrieve a focused slice of the latest bound snapshot
+  - examples:
+
+```bash
+node dist/scripts/query-snapshot.js --tab-ref main --mode auto
+node dist/scripts/query-snapshot.js --tab-ref main --mode search --query "Buy now"
+node dist/scripts/query-snapshot.js --tab-ref main --mode search --role button
+node dist/scripts/query-snapshot.js --snapshot-ref snapshot_demo --mode full
+```
+
 - `read-knowledge.js`
-  - required: either `--id`, or `--origin` plus `--normalized-path`
+  - daemon path: use `--knowledge-ref`, or a runtime/page hint such as `--tab-ref`, `--snapshot-ref`, or `--origin` plus `--normalized-path`
+  - standalone compatibility: `--knowledge-file` only when intentionally reading a file without runtime state
   - purpose: read durable page knowledge
+  - example:
+
+```bash
+node dist/scripts/read-knowledge.js --tab-ref main
+node dist/scripts/read-knowledge.js --origin https://example.com --normalized-path /checkout
+```
+
 - `record-knowledge.js`
-  - required: `--origin`, `--normalized-path`, `--guide`
-  - optional: `--keywords`
+  - required: `--origin`, `--normalized-path`, `--guide`, `--keywords`
+  - optional: `--tab-ref`, `--snapshot-ref`, `--knowledge-ref`, `--rationale`
+  - standalone compatibility: `--knowledge-file` only when there is no runtime hint
   - purpose: save a durable reusable page cue
+  - example:
+
+```bash
+node dist/scripts/record-knowledge.js \
+  --tab-ref main \
+  --origin https://example.com \
+  --normalized-path /checkout \
+  --guide "The promo code field is below the order summary." \
+  --keywords "checkout,promo,summary"
+```
 
 ## Invocation Notes
 
 - Use one `--tab-ref` consistently for one browser task context.
 - Capture first if you are unsure what the current browser context is.
+- First capture now creates a new workspace tab by default, so it should not hijack the user's current active tab unless you explicitly pass `--tab-index`.
 - Treat returned `tabRef` and `snapshotRef` as the main runtime contract. `snapshotPath` is only compatibility/debug detail.
 - `query-snapshot.js --mode search` should include at least one selector such as `--query`, `--role`, or `--uid`.
 - `query-snapshot.js --mode auto` is the normal retrieval path.
 - `query-snapshot.js --mode full` is the fallback path when targeted retrieval is not enough.
+- `query-snapshot.js` only returns full `snapshotText` for `full` results, or when `auto` legitimately falls back to a full snapshot. `search` results should stay compact.
 - `query-snapshot.js` reads Chrome DevTools MCP accessibility snapshots. The canonical element handle is `uid`, and legacy `--ref` still works as a compatibility alias during migration.
+- `query-snapshot.js` no longer accepts `--knowledge-file`; runtime-owned knowledge hits come from the daemon-backed page identity, not a caller-supplied file path.
 - `click.js` and `type.js` also accept legacy `--ref` as a compatibility alias, but `--uid` is the canonical handle name you should prefer.
 - `select-tab.js` accepts legacy `--index` and `--tab-index` aliases, but `--page-id` is the canonical argument name.
 - `read-knowledge.js` and `record-knowledge.js` work on `origin + normalizedPath`, not on arbitrary files.

@@ -160,6 +160,7 @@ test("browser-sessiond shortens socket paths when a custom session root exceeds 
       createMcpBridge: async () => ({
         close: async () => {},
         listPages: async () => "## Pages\n1: https://example.com [selected]",
+        newPage: async () => "## Pages\n1: chrome://newtab/ [selected]",
         captureSnapshot: async () => "## Snapshot\nuid=1_0 RootWebArea \"Example\"",
         callTool: async () => ({ content: [{ type: "text", text: "ok" }] }),
       }),
@@ -258,6 +259,7 @@ async function createDaemonHarness(options?: {
       return {
         close: async () => {},
         listPages: async () => "## Pages\n1: https://example.com [selected]",
+        newPage: async () => "## Pages\n1: chrome://newtab/ [selected]",
         captureSnapshot: async () => "## Snapshot\nuid=1_0 RootWebArea \"Example\"",
         callTool: async () => ({ content: [{ type: "text", text: "ok" }] }),
       };
