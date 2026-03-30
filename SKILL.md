@@ -19,7 +19,7 @@ Make sure the target Chrome session is already running with remote debugging ena
 
 ## Work Model
 
-Establish context first. Then keep doing the browser work through this skill instead of mixing in unrelated browser calls. In this phase the skill attaches to an already running Chrome session through Chrome DevTools MCP auto-connect; it does not launch its own Playwright-managed browser. When the built-in guidance is enough, continue. When it is not enough, query the latest snapshot more precisely. Chrome DevTools MCP snapshots are accessibility-tree text headed by `## Latest page snapshot`, and element handles in that snapshot are `uid` values. If the run exposes something stable and useful for the same page identity, record it. Knowledge is a byproduct of successful browser work, not the main goal.
+Establish context first. Then keep doing the browser work through this skill instead of mixing in unrelated browser calls. In this phase the skill attaches to an already running Chrome session through Chrome DevTools MCP auto-connect, and the first command starts `browser-sessiond` as the single runtime owner for MCP attach, snapshot capture, snapshot querying, and knowledge IO. The CLI scripts are thin RPC entrypoints into that daemon; they do not each own their own browser session. Chrome DevTools MCP snapshots are accessibility-tree text headed by `## Latest page snapshot`, and element handles in that snapshot are `uid` values. When the built-in guidance is enough, continue. When it is not enough, query the latest snapshot more precisely. If the run exposes something stable and useful for the same page identity, record it. Knowledge is a byproduct of successful browser work, not the main goal.
 
 ## Command Surface
 
@@ -27,16 +27,18 @@ At the CLI level, the skill currently exposes these commands:
 
 - `node dist/scripts/capture.js --tab-ref <tabRef>`
 - `node dist/scripts/navigate.js --tab-ref <tabRef> --url <absolute-url>`
-- `node dist/scripts/click.js --tab-ref <tabRef> --ref <element-ref>`
-- `node dist/scripts/type.js --tab-ref <tabRef> --ref <element-ref> --text <value>`
+- `node dist/scripts/click.js --tab-ref <tabRef> --uid <element-uid>`
+- `node dist/scripts/type.js --tab-ref <tabRef> --uid <element-uid> --text <value>`
 - `node dist/scripts/press.js --tab-ref <tabRef> --key <key-name>`
-- `node dist/scripts/select-tab.js --tab-ref <tabRef> --index <tab-index>`
+- `node dist/scripts/select-tab.js --tab-ref <tabRef> --page-id <page-id>`
 - `node dist/scripts/query-snapshot.js --tab-ref <tabRef> --mode <search|auto|full> [--query <text>] [--role <role>] [--uid <uid>]`
 - `node dist/scripts/read-knowledge.js --origin <origin> --normalized-path <path>`
 - `node dist/scripts/record-knowledge.js --origin <origin> --normalized-path <path> --guide <text> [--keywords <comma-separated>]`
 
-Use the README as the denser operator-facing reference for installation and exact command details. After installation, call the compiled `dist/scripts/*.js` entrypoints rather than the `.ts` source files. For snapshot retrieval, treat `query-snapshot.js` as the single local front door; prefer `--uid` selectors from the latest snapshot, with legacy `--ref` accepted only as a compatibility alias during migration.
+Use the README as the denser operator-facing reference for installation and exact command details. After installation, call the compiled `dist/scripts/*.js` entrypoints rather than the `.ts` source files. For snapshot retrieval, treat `query-snapshot.js` as the single local front door; prefer `--uid` selectors from the latest snapshot. `click.js`, `type.js`, and `query-snapshot.js` still accept legacy `--ref` during migration, and `select-tab.js` still accepts legacy `--index`, but the canonical names are `--uid` and `--page-id`.
 
 ## Practical Rules
 
 Keep the browser work inside one coherent task context at a time. Re-establish context when ownership becomes uncertain. Ask the skill for fresh retrieval instead of trusting stale browser state from earlier in the conversation. Save knowledge only when it is likely to improve a future run on the same page identity.
+
+Treat `tabRef` and `snapshotRef` as the agent-facing runtime contract. Do not design new flows around direct runtime-file reads unless you are explicitly debugging the daemon or inspecting compatibility behavior.

@@ -1,18 +1,23 @@
 import process from "node:process";
 
-import { formatCliError, isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
 import {
+  formatCliError,
+  isDirectCliInvocation,
+  readCliArgs,
+  sendSessionRpcRequest,
+  withSnapshotRefFirst,
+} from "../lib/cli.js";
+import {
+  optionalCliStringArg,
   parseCliBooleanArg,
   requireCliStringArg,
-  runBrowserAction,
-  runWithBrowserActionDeps,
-  type BrowserActionDeps,
 } from "../lib/browser-action.js";
+import { assertSessionRpcResult } from "../runtime/session-rpc-types.js";
+import type { ActionResult } from "../lib/types.js";
 
 export async function runTypeCommand(
   args: { tabRef: string; uid: string; text: string; slowly?: boolean; submit?: boolean },
-  deps?: BrowserActionDeps,
-) {
+): Promise<ActionResult> {
   if (args.submit) {
     throw new Error("type submit is unsupported: Chrome DevTools MCP requires a separate press command");
   }
@@ -21,20 +26,17 @@ export async function runTypeCommand(
     throw new Error("type slowly is unsupported: Chrome DevTools MCP fill does not support slow typing");
   }
 
-  return runWithBrowserActionDeps(deps, (resolvedDeps) =>
-    runBrowserAction(
-      {
-        action: "type",
-        tabRef: args.tabRef,
-        toolName: "fill",
-        toolArgs: {
-          uid: args.uid,
-          value: args.text,
-        },
-      },
-      resolvedDeps,
-    ),
-  );
+  const result = await sendSessionRpcRequest("type", {
+    tabRef: args.tabRef,
+    uid: args.uid,
+    text: args.text,
+  });
+  assertSessionRpcResult(result);
+  const actionResult = {
+    ...result,
+    action: "type" as const,
+  };
+  return withSnapshotRefFirst(actionResult);
 }
 
 export function parseTypeCliArgs(args: Record<string, string | boolean>): {
@@ -44,9 +46,15 @@ export function parseTypeCliArgs(args: Record<string, string | boolean>): {
   slowly?: boolean;
   submit?: boolean;
 } {
+  const uid = optionalCliStringArg(args, "uid", "uid");
+  const ref = optionalCliStringArg(args, "ref", "ref");
+  if (uid !== undefined && ref !== undefined && uid !== ref) {
+    throw new Error("--uid and --ref must match when both are provided");
+  }
+
   return {
     tabRef: requireCliStringArg(args, "tab-ref", "tabRef"),
-    uid: requireCliStringArg(args, "uid", "uid"),
+    uid: uid ?? ref ?? requireCliStringArg(args, "uid", "uid"),
     text: requireCliStringArg(args, "text", "text"),
     slowly: parseCliBooleanArg(args.slowly),
     submit: parseCliBooleanArg(args.submit),

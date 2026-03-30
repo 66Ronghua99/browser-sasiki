@@ -5,7 +5,13 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { formatCliError, isDirectCliInvocation, readCliArgs } from "../../lib/cli.js";
+import {
+  formatCliError,
+  isDirectCliInvocation,
+  readCliArgs,
+  sendSessionRpcRequest,
+  setSessionRpcRequestSenderForTesting,
+} from "../../lib/cli.js";
 
 test("readCliArgs parses key-value pairs and bare flags", () => {
   assert.deepEqual(readCliArgs(["--tab-ref", "main", "--submit"]), {
@@ -46,4 +52,38 @@ test("formatCliError prefers readable messages over stack traces", () => {
 
   assert.equal(formatCliError(error), "human-friendly failure");
   assert.equal(formatCliError("plain failure"), "plain failure");
+});
+
+test("sendSessionRpcRequest forwards one frozen RPC request envelope to the injected sender", async () => {
+  const requests: Array<{ requestId: string; method: string; params: unknown }> = [];
+  setSessionRpcRequestSenderForTesting(async (request) => {
+    requests.push(request);
+    return {
+      ok: true as const,
+      tabRef: "tab_demo",
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/dashboard",
+        title: "Dashboard",
+      },
+      knowledgeHits: [],
+      summary: "ready",
+      snapshotPath: "/tmp/snapshot.md",
+      snapshotRef: "snapshot_demo",
+    };
+  });
+
+  const result = await sendSessionRpcRequest("capture", {
+    tabRef: "tab_demo",
+    tabIndex: 2,
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.method, "capture");
+  assert.ok(typeof requests[0]?.requestId === "string" && String(requests[0]?.requestId).length > 0);
+  assert.deepEqual(requests[0]?.params, {
+    tabRef: "tab_demo",
+    tabIndex: 2,
+  });
+  assert.equal((result as { snapshotRef?: string }).snapshotRef, "snapshot_demo");
 });

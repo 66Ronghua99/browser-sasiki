@@ -5,6 +5,7 @@ export interface ParsedSnapshotElement {
   raw: string;
   role: string | null;
   text: string;
+  uid: string | null;
   ref: string | null;
 }
 
@@ -13,7 +14,8 @@ export interface ParsedSnapshotText {
   elements: ParsedSnapshotElement[];
 }
 
-const SNAPSHOT_SECTION = "### Snapshot";
+const LEGACY_SNAPSHOT_SECTION = "### Snapshot";
+const ACCESSIBILITY_SNAPSHOT_SECTION = "## Latest page snapshot";
 
 function unescapeQuotedText(value: string): string {
   return value.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
@@ -21,7 +23,15 @@ function unescapeQuotedText(value: string): string {
 
 function snapshotBodyLines(snapshotText: string): Array<{ lineNumber: number; raw: string }> {
   const lines = snapshotText.split(/\r?\n/);
-  const headingIndex = lines.findIndex((line) => line.trim() === SNAPSHOT_SECTION);
+  const accessibilityHeadingIndex = lines.findIndex((line) => line.trim() === ACCESSIBILITY_SNAPSHOT_SECTION);
+  if (accessibilityHeadingIndex >= 0) {
+    return lines.slice(accessibilityHeadingIndex + 1).map((raw, index) => ({
+      lineNumber: accessibilityHeadingIndex + index + 2,
+      raw,
+    }));
+  }
+
+  const headingIndex = lines.findIndex((line) => line.trim() === LEGACY_SNAPSHOT_SECTION);
   if (headingIndex < 0) {
     return lines.map((raw, index) => ({ lineNumber: index + 1, raw }));
   }
@@ -113,6 +123,7 @@ function parseQuotedElementLine(line: string, lineNumber: number, raw: string): 
     raw,
     role,
     text,
+    uid: null,
     ref,
   };
 }
@@ -136,13 +147,39 @@ function parseBareElementLine(line: string, lineNumber: number, raw: string): Pa
     raw,
     role: parsed.role,
     text: parsed.text,
+    uid: parsed.ref,
     ref: parsed.ref,
+  };
+}
+
+function parseAccessibilityElementLine(raw: string, lineNumber: number): ParsedSnapshotElement | null {
+  const match = raw.match(/^\s*uid=(?<uid>[^\s]+)\s+(?<role>[A-Za-z][\w-]*)(?<rest>.*)$/u);
+  if (!match?.groups) {
+    return null;
+  }
+
+  const uid = match.groups.uid.trim();
+  const role = match.groups.role.trim();
+  const text = match.groups.rest.match(/(?:^|\s)"(?<label>(?:\\.|[^"])*)"/u)?.groups?.label ?? "";
+
+  return {
+    lineNumber,
+    raw,
+    role,
+    text: unescapeQuotedText(text),
+    uid,
+    ref: uid,
   };
 }
 
 export function parseSnapshotElements(snapshotText: string): ParsedSnapshotElement[] {
   return snapshotBodyLines(snapshotText)
     .map(({ lineNumber, raw }): ParsedSnapshotElement | null => {
+      const parsedAccessibility = parseAccessibilityElementLine(raw, lineNumber);
+      if (parsedAccessibility) {
+        return parsedAccessibility;
+      }
+
       const parsedQuoted = parseQuotedElementLine(raw, lineNumber, raw);
       if (parsedQuoted) {
         return parsedQuoted;

@@ -21,7 +21,9 @@ export interface SkillResultBase {
   ok: true;
   tabRef: string;
   page: SkillPageIdentity;
+  snapshotRef?: string;
   snapshotPath: string;
+  knowledgeRef?: string;
   knowledgeHits: KnowledgeHit[];
   summary: string;
 }
@@ -81,7 +83,13 @@ function assertBaseResult(result: unknown): asserts result is SkillResultBase {
   }
   assertString(result.tabRef, "tabRef");
   assertPageIdentity(result.page);
+  if (result.snapshotRef !== undefined) {
+    assertString(result.snapshotRef, "snapshotRef");
+  }
   assertString(result.snapshotPath, "snapshotPath");
+  if (result.knowledgeRef !== undefined) {
+    assertString(result.knowledgeRef, "knowledgeRef");
+  }
   assertKnowledgeHits(result.knowledgeHits);
   assertString(result.summary, "summary");
 }

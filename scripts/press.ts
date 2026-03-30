@@ -1,30 +1,29 @@
 import process from "node:process";
 
-import { formatCliError, isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
 import {
-  requireCliStringArg,
-  runBrowserAction,
-  runWithBrowserActionDeps,
-  type BrowserActionDeps,
-} from "../lib/browser-action.js";
+  formatCliError,
+  isDirectCliInvocation,
+  readCliArgs,
+  sendSessionRpcRequest,
+  withSnapshotRefFirst,
+} from "../lib/cli.js";
+import { requireCliStringArg } from "../lib/browser-action.js";
+import { assertSessionRpcResult } from "../runtime/session-rpc-types.js";
+import type { ActionResult } from "../lib/types.js";
 
 export async function runPressCommand(
   args: { tabRef: string; key: string },
-  deps?: BrowserActionDeps,
-) {
-  return runWithBrowserActionDeps(deps, (resolvedDeps) =>
-    runBrowserAction(
-      {
-        action: "press",
-        tabRef: args.tabRef,
-        toolName: "press_key",
-        toolArgs: {
-          key: args.key,
-        },
-      },
-      resolvedDeps,
-    ),
-  );
+): Promise<ActionResult> {
+  const result = await sendSessionRpcRequest("press", {
+    tabRef: args.tabRef,
+    key: args.key,
+  });
+  assertSessionRpcResult(result);
+  const actionResult = {
+    ...result,
+    action: "press" as const,
+  };
+  return withSnapshotRefFirst(actionResult);
 }
 
 export function parsePressCliArgs(args: Record<string, string | boolean>): {

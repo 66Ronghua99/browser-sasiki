@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 
@@ -38,7 +39,7 @@ export interface RunBrowserActionInput {
   nextBrowserTabIndex?: number;
 }
 
-class DefaultBrowserRuntime implements BrowserRuntime {
+export class DefaultBrowserRuntime implements BrowserRuntime {
   constructor(private readonly client: McpBrowserClient) {}
 
   async captureSnapshot(): Promise<string> {
@@ -52,45 +53,39 @@ class DefaultBrowserRuntime implements BrowserRuntime {
   }
 
   async readActiveTabIndex(): Promise<number> {
-    const result = await this.callBrowserTool("browser_tabs", { action: "list" });
-    const text = readToolText(result);
-    if (!text) {
-      return this.readActiveTabIndexFromSnapshot();
-    }
-
-    const activeTab = parseTabInventory(text).find((tab) => tab.active);
+    const pageListText = await this.client.listPages();
+    const activeTab = parseTabInventory(pageListText).find((tab) => tab.active);
     if (!activeTab) {
-      return this.readActiveTabIndexFromSnapshot();
-    }
-
-    return activeTab.index;
-  }
-
-  private async readActiveTabIndexFromSnapshot(): Promise<number> {
-    const snapshotText = await this.captureSnapshot();
-    const activeTab = parseTabInventory(snapshotText).find((tab) => tab.active);
-    if (!activeTab) {
-      throw new Error("unable to identify the current tab from browser_tabs list or snapshot inventory");
+      throw new Error("unable to identify the current page from list_pages output");
     }
     return activeTab.index;
   }
 }
 
-class InternalStdioToolClient implements ToolClientLike {
+export interface BrowserMcpLaunchOptions {
+  command: string;
+  args: string[];
+}
+
+export class InternalStdioToolClient implements ToolClientLike {
   private processStarted = false;
   private session: unknown | null = null;
   private transport: unknown | null = null;
+
+  constructor(private readonly launchOptions?: BrowserMcpLaunchOptions) {}
 
   async connect(): Promise<void> {
     if (this.processStarted) {
       return;
     }
 
+    const launchOptions = this.launchOptions
+      ?? resolveBrowserMcpLaunchOptions(process.env as Record<string, string | undefined>);
     const clientModule: any = await import("@modelcontextprotocol/sdk/client/index.js");
     const stdioModule: any = await import("@modelcontextprotocol/sdk/client/stdio.js");
     const transport = new stdioModule.StdioClientTransport({
-      command: process.env.SASIKI_BROWSER_MCP_COMMAND ?? "npx",
-      args: parseCommandArgs(process.env.SASIKI_BROWSER_MCP_ARGS),
+      command: launchOptions.command,
+      args: launchOptions.args,
       env: process.env as Record<string, string>,
       stderr: "pipe",
     });
@@ -169,10 +164,7 @@ export async function runBrowserAction(
   const binding = await deps.tabBindings.read(tabRef);
 
   if (input.preselectBoundTab !== false) {
-    await deps.browser.callBrowserTool("browser_tabs", {
-      action: "select",
-      index: binding.browserTabIndex,
-    });
+    await selectCapturedPage(deps.browser, binding.browserTabIndex);
   }
 
   await deps.browser.callBrowserTool(input.toolName, input.toolArgs);
@@ -215,13 +207,9 @@ export async function runCaptureFlow(
 
   const providedTabRef = optionalNonEmptyString(args.tabRef, "tabRef");
   const resolvedTabIndex = await resolveCaptureTabIndex(args, deps, providedTabRef);
-
-  await deps.browser.callBrowserTool("browser_tabs", {
-    action: "select",
-    index: resolvedTabIndex,
-  });
-
-  const snapshotText = await deps.browser.captureSnapshot();
+  const pageListText = await selectCapturedPage(deps.browser, resolvedTabIndex);
+  const rawSnapshotText = await deps.browser.captureSnapshot();
+  const snapshotText = normalizeCapturedSnapshot(pageListText, rawSnapshotText, resolvedTabIndex);
   const { snapshotPath } = await deps.snapshots.write(snapshotText);
   const page = pageIdentityFromSnapshotText(snapshotText);
   const tabRef = providedTabRef ?? mintTabRef();
@@ -337,14 +325,87 @@ export function requireCliIntegerArg(
   return parseCliIntegerArg(value, label) as number;
 }
 
-function parseCommandArgs(value: string | undefined): string[] {
-  if (!value || value.trim().length === 0) {
-    return ["@playwright/mcp@latest"];
+export function resolveBrowserMcpLaunchOptions(
+  env: Record<string, string | undefined>,
+  options?: {
+    runningChromeCommands?: string[];
+  },
+): {
+  command: string;
+  args: string[];
+} {
+  const explicitArgs = env.SASIKI_BROWSER_MCP_ARGS;
+  if (explicitArgs && explicitArgs.trim().length > 0) {
+    return {
+      command: env.SASIKI_BROWSER_MCP_COMMAND ?? "npx",
+      args: parseCommandArgs(explicitArgs),
+    };
   }
+
+  const explicitBrowserUrl = env.SASIKI_BROWSER_URL?.trim();
+  if (explicitBrowserUrl) {
+    return {
+      command: env.SASIKI_BROWSER_MCP_COMMAND ?? "npx",
+      args: ["chrome-devtools-mcp@latest", "--browserUrl", explicitBrowserUrl],
+    };
+  }
+
+  const detectedBrowserUrl = detectRunningChromeBrowserUrl(options?.runningChromeCommands);
+  if (detectedBrowserUrl) {
+    return {
+      command: env.SASIKI_BROWSER_MCP_COMMAND ?? "npx",
+      args: ["chrome-devtools-mcp@latest", "--browserUrl", detectedBrowserUrl],
+    };
+  }
+
+  return {
+    command: env.SASIKI_BROWSER_MCP_COMMAND ?? "npx",
+    args: ["chrome-devtools-mcp@latest", "--autoConnect"],
+  };
+}
+
+function parseCommandArgs(value: string): string[] {
   return value
     .split(/\s+/)
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
+}
+
+function detectRunningChromeBrowserUrl(runningChromeCommands?: string[]): string | undefined {
+  const commands = runningChromeCommands ?? readRunningChromeCommands();
+  const preferredCommand = commands.find((command) => !/\s--type=/i.test(command));
+  return parseBrowserUrlFromChromeCommand(preferredCommand)
+    ?? commands.map((command) => parseBrowserUrlFromChromeCommand(command)).find((url) => url !== undefined);
+}
+
+function readRunningChromeCommands(): string[] {
+  try {
+    const output = execFileSync("ps", ["axo", "command"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && /Chrome|Chromium/i.test(line));
+  } catch {
+    return [];
+  }
+}
+
+function parseBrowserUrlFromChromeCommand(command: string | undefined): string | undefined {
+  if (!command || !/--remote-debugging-port=\d+/i.test(command)) {
+    return undefined;
+  }
+
+  const portMatch = command.match(/--remote-debugging-port=(\d+)/i);
+  if (!portMatch) {
+    return undefined;
+  }
+
+  const addressMatch = command.match(/--remote-debugging-address=([^\s]+)/i);
+  const address = addressMatch?.[1]?.trim() || "127.0.0.1";
+  return `http://${address}:${portMatch[1]}`;
 }
 
 async function createDefaultBrowserActionDeps(): Promise<DisposableBrowserActionDeps> {
@@ -451,6 +512,66 @@ function assertBrowserToolSucceeded(name: string, result: ToolCallResultLike): v
   }
 }
 
+async function selectCapturedPage(browser: BrowserRuntime, pageId: number): Promise<string> {
+  const result = await browser.callBrowserTool("select_page", {
+    pageId,
+    bringToFront: true,
+  });
+  const text = readToolText(result);
+  if (!text) {
+    throw new Error("select_page returned a malformed payload: expected text content");
+  }
+  return text;
+}
+
+function normalizeCapturedSnapshot(
+  pageListText: string,
+  rawSnapshotText: string,
+  fallbackPageId: number,
+): string {
+  const tabs = parseTabInventory(pageListText);
+  const pageIdentity = extractPageIdentityFromChromeSnapshot(rawSnapshotText, tabs, fallbackPageId);
+  const openTabsSection = tabs.length > 0
+    ? [
+        "### Open tabs",
+        ...tabs.map((tab) => `- ${tab.index}: ${tab.active ? "(current) " : ""}[${tab.title}](${tab.url})`),
+      ]
+    : [];
+
+  return [
+    ...openTabsSection,
+    "### Page",
+    `- Page URL: ${pageIdentity.url}`,
+    `- Page Title: ${pageIdentity.title}`,
+    "### Snapshot",
+    "```text",
+    ...rawSnapshotText.split(/\r?\n/),
+    "```",
+  ].join("\n");
+}
+
+function extractPageIdentityFromChromeSnapshot(
+  rawSnapshotText: string,
+  tabs: SkillTabInventoryItem[],
+  fallbackPageId: number,
+): { url: string; title: string } {
+  const rootMatch = rawSnapshotText.match(
+    /RootWebArea\s+"(?<title>(?:\\.|[^"])*)"(?:\s+url="(?<url>[^"]+)")?/i,
+  );
+  const selectedTab = tabs.find((tab) => tab.active) ?? tabs.find((tab) => tab.index === fallbackPageId);
+  const url = rootMatch?.groups?.url?.trim() || selectedTab?.url;
+  if (!url) {
+    throw new Error("take_snapshot did not include a page URL and no selected page was available");
+  }
+
+  const title = unescapeSnapshotQuotedText(rootMatch?.groups?.title?.trim() || "") || selectedTab?.title || url;
+  return { url, title };
+}
+
+function unescapeSnapshotQuotedText(value: string): string {
+  return value.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+}
+
 function readToolText(result: ToolCallResultLike): string | null {
   if (typeof result === "string") {
     return result;
@@ -493,21 +614,64 @@ export function parseTabInventory(snapshotText: string): SkillTabInventoryItem[]
   const lines = snapshotText.split(/\r?\n/);
   const tabs: SkillTabInventoryItem[] = [];
   let inOpenTabs = false;
+  let inPageList = false;
 
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed === "### Open tabs") {
       inOpenTabs = true;
+      inPageList = false;
       continue;
     }
-    if (inOpenTabs && trimmed.startsWith("### ")) {
+    if (trimmed === "## Pages") {
+      inOpenTabs = false;
+      inPageList = true;
+      continue;
+    }
+    if ((inOpenTabs && trimmed.startsWith("### ")) || (inPageList && trimmed.startsWith("## "))) {
       break;
     }
-    if (!inOpenTabs) {
+    if (!inOpenTabs && !inPageList) {
       continue;
     }
 
-    const match = trimmed.match(/^\-\s*(?<index>\d+)\s*:\s*(?<rest>.+)$/);
+    if (inOpenTabs) {
+      const match = trimmed.match(/^\-\s*(?<index>\d+)\s*:\s*(?<rest>.+)$/);
+      if (!match?.groups) {
+        continue;
+      }
+
+      const index = Number.parseInt(match.groups.index, 10);
+      if (!Number.isInteger(index) || index < 0) {
+        continue;
+      }
+
+      const rest = match.groups.rest.trim();
+      const link =
+        rest.match(/^\(current\)\s+\[(?<title>[^\]]*)\]\((?<url>.*)\)$/) ??
+        rest.match(/^\[(?<title>[^\]]*)\]\((?<url>.*)\)\s+\(current\)$/) ??
+        rest.match(/^\[(?<title>[^\]]*)\]\((?<url>.*)\)$/);
+
+      if (!link?.groups) {
+        continue;
+      }
+
+      const title = (link.groups.title ?? "").trim() || "Untitled";
+      const url = (link.groups.url ?? "").trim();
+      if (!url) {
+        continue;
+      }
+
+      tabs.push({
+        index,
+        title,
+        url,
+        active: /\(current\)/i.test(rest),
+      });
+      continue;
+    }
+
+    const match = trimmed.match(/^(?<index>\d+)\s*:\s*(?<url>\S.*?)(?<selected>\s+\[selected\])?$/);
     if (!match?.groups) {
       continue;
     }
@@ -517,27 +681,16 @@ export function parseTabInventory(snapshotText: string): SkillTabInventoryItem[]
       continue;
     }
 
-    const rest = match.groups.rest.trim();
-    const link =
-      rest.match(/^\(current\)\s+\[(?<title>[^\]]*)\]\((?<url>.*)\)$/) ??
-      rest.match(/^\[(?<title>[^\]]*)\]\((?<url>.*)\)\s+\(current\)$/) ??
-      rest.match(/^\[(?<title>[^\]]*)\]\((?<url>.*)\)$/);
-
-    if (!link?.groups) {
-      continue;
-    }
-
-    const title = (link.groups.title ?? "").trim() || "Untitled";
-    const url = (link.groups.url ?? "").trim();
+    const url = match.groups.url.trim();
     if (!url) {
       continue;
     }
 
     tabs.push({
       index,
-      title,
+      title: url,
       url,
-      active: /\(current\)/i.test(rest),
+      active: Boolean(match.groups.selected),
     });
   }
 

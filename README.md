@@ -48,7 +48,7 @@ After install, the files that matter most are:
 
 There is not yet a dedicated `help` command in the package. For now, this README is the install document and the concise command reference. After `npm install`, call the compiled scripts in `dist/scripts/` rather than the `.ts` source files.
 
-The runtime model in this phase is attach-first: the skill connects to an already running Chrome session through Chrome DevTools MCP auto-connect. It does not launch its own Playwright-managed browser, create a fresh profile, or import cookies on your behalf.
+The runtime model in this phase is attach-first and daemon-backed: the first command starts `browser-sessiond`, and that daemon becomes the single owner of Chrome DevTools MCP attachment, snapshot capture, snapshot querying, and knowledge read/write. The CLI scripts are thin RPC entrypoints into that daemon. The skill does not launch its own Playwright-managed browser, create a fresh profile, or import cookies on your behalf.
 
 ## If Chrome Does Not Attach
 
@@ -65,13 +65,15 @@ The compiled scripts now surface this guidance automatically when Chrome DevTool
 ## What Gets Stored
 
 - runtime temp state: `~/.sasiki/browser-skill/tmp/`
+  - session metadata and daemon socket
+  - tab bindings and cached snapshots
 - durable page knowledge: `skill/knowledge/page-knowledge.jsonl`
 
 The temp directory is disposable runtime state. The knowledge file is the durable artifact you keep with the skill.
 
 ## Quick Start
 
-Start Chrome yourself first, make sure remote debugging is enabled for that session, and allow Chrome DevTools MCP to attach if Chrome asks. Then start with `capture`. That command establishes the current browser context and gives you the handle that the rest of the browser task depends on.
+Start Chrome yourself first, make sure remote debugging is enabled for that session, and allow Chrome DevTools MCP to attach if Chrome asks. Then start with `capture`. That command starts the daemon if needed, establishes the current browser context, and gives you the handle that the rest of the browser task depends on. Later commands should reuse the same daemon-backed runtime instead of reconnecting from scratch.
 
 Typical sequence:
 
@@ -91,11 +93,11 @@ The main command groups are:
 
 - capture and rebinding
   - `node dist/scripts/capture.js --tab-ref <tabRef>`
-  - `node dist/scripts/select-tab.js --tab-ref <tabRef> --index <tab-index>`
+  - `node dist/scripts/select-tab.js --tab-ref <tabRef> --page-id <page-id>`
 - mutation
   - `node dist/scripts/navigate.js --tab-ref <tabRef> --url <absolute-url>`
-  - `node dist/scripts/click.js --tab-ref <tabRef> --ref <element-ref>`
-  - `node dist/scripts/type.js --tab-ref <tabRef> --ref <element-ref> --text <value>`
+  - `node dist/scripts/click.js --tab-ref <tabRef> --uid <element-uid>`
+  - `node dist/scripts/type.js --tab-ref <tabRef> --uid <element-uid> --text <value>`
   - `node dist/scripts/press.js --tab-ref <tabRef> --key <key-name>`
 - retrieval and knowledge
   - `node dist/scripts/query-snapshot.js --tab-ref <tabRef> --mode <search|auto|full> [--query <text>] [--role <role>] [--uid <uid>]`
@@ -109,16 +111,16 @@ The main command groups are:
   - required: `--tab-ref`, `--url`
   - purpose: move the bound browser task to a new URL
 - `click.js`
-  - required: `--tab-ref`, `--ref`
+  - required: `--tab-ref`, `--uid`
   - purpose: click a known element in the current bound page
 - `type.js`
-  - required: `--tab-ref`, `--ref`, `--text`
+  - required: `--tab-ref`, `--uid`, `--text`
   - purpose: type into a known element in the current bound page
 - `press.js`
   - required: `--tab-ref`, `--key`
   - purpose: send a keyboard action in the current bound page
 - `select-tab.js`
-  - required: `--tab-ref`, `--index`
+  - required: `--tab-ref`, `--page-id`
   - purpose: rebind the task to another browser tab
 - `query-snapshot.js`
   - required: `--mode`, plus one snapshot source such as `--tab-ref`
@@ -136,10 +138,13 @@ The main command groups are:
 
 - Use one `--tab-ref` consistently for one browser task context.
 - Capture first if you are unsure what the current browser context is.
+- Treat returned `tabRef` and `snapshotRef` as the main runtime contract. `snapshotPath` is only compatibility/debug detail.
 - `query-snapshot.js --mode search` should include at least one selector such as `--query`, `--role`, or `--uid`.
 - `query-snapshot.js --mode auto` is the normal retrieval path.
 - `query-snapshot.js --mode full` is the fallback path when targeted retrieval is not enough.
 - `query-snapshot.js` reads Chrome DevTools MCP accessibility snapshots. The canonical element handle is `uid`, and legacy `--ref` still works as a compatibility alias during migration.
+- `click.js` and `type.js` also accept legacy `--ref` as a compatibility alias, but `--uid` is the canonical handle name you should prefer.
+- `select-tab.js` accepts legacy `--index` and `--tab-index` aliases, but `--page-id` is the canonical argument name.
 - `read-knowledge.js` and `record-knowledge.js` work on `origin + normalizedPath`, not on arbitrary files.
 - On the first run, `node dist/scripts/capture.js --tab-ref main` is a valid cold-start command.
 
@@ -148,3 +153,4 @@ The main command groups are:
 - Do not guess browser context. If you are unsure, capture first.
 - Do not treat this as a knowledge-harvesting skill. Its job is to finish browser work.
 - Use `query-snapshot.js` as a local retrieval tool, not as a reason to inline whole snapshots into the chat.
+- Do not bypass the daemon by reading runtime temp files directly unless you are explicitly debugging. Query and knowledge commands are meant to go through the same runtime owner as capture and mutation actions.

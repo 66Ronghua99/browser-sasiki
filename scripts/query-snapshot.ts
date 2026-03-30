@@ -1,18 +1,16 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
-import { formatCliError, isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
+import { formatCliError, isDirectCliInvocation, readCliArgs, sendSessionRpcRequest } from "../lib/cli.js";
 import { optionalCliStringArg, requireCliStringArg } from "../lib/browser-action.js";
-import { defaultRuntimeRoots } from "../lib/paths.js";
-import { KnowledgeStore } from "../lib/knowledge-store.js";
-import { pageIdentityFromSnapshotText, normalizePagePath } from "../lib/page-identity.js";
 import { querySnapshotText } from "../lib/knowledge-query.js";
-import { TabBindingStore } from "../lib/tab-binding-store.js";
+import { pageIdentityFromSnapshotText, normalizePagePath } from "../lib/page-identity.js";
+import type { SessionRpcRequestMap } from "../runtime/session-rpc-types.js";
 
 export interface QuerySnapshotCliArgs {
   mode: "search" | "auto" | "full";
   tabRef?: string;
+  snapshotRef?: string;
   snapshotPath?: string;
   snapshotText?: string;
   text?: string;
@@ -57,55 +55,9 @@ function resolveHandleSelector(uid: string | undefined, ref: string | undefined)
   };
 }
 
-async function resolveSnapshotText(args: QuerySnapshotCliArgs): Promise<string> {
-  const inlineSnapshotText = args.snapshotText;
-  if (inlineSnapshotText !== undefined) {
-    return Promise.resolve(inlineSnapshotText);
-  }
-
-  if (args.snapshotPath !== undefined) {
-    return fs.readFile(path.resolve(args.snapshotPath), "utf8");
-  }
-
-  if (args.tabRef !== undefined) {
-    const roots = defaultRuntimeRoots();
-    const tabBindings = new TabBindingStore(path.join(roots.tempRoot, "tab-state"));
-    const binding = await tabBindings.read(args.tabRef);
-    return fs.readFile(path.resolve(binding.snapshotPath), "utf8");
-  }
-
-  throw new Error("query-snapshot requires --tab-ref, --snapshot-path, or --snapshot-text");
-}
-
-function resolveKnowledgeStore(args: QuerySnapshotCliArgs): KnowledgeStore {
-  const knowledgeFile = args.knowledgeFile ?? defaultRuntimeRoots().knowledgeFile;
-  return new KnowledgeStore(path.resolve(knowledgeFile));
-}
-
-function resolvePage(args: QuerySnapshotCliArgs, snapshotText: string) {
-  const origin = args.origin;
-  const normalizedPath = args.path;
-  const title = args.title;
-  if (origin && normalizedPath) {
-    let snapshotTitle = "Unknown";
-    try {
-      snapshotTitle = pageIdentityFromSnapshotText(snapshotText).title;
-    } catch {
-      snapshotTitle = "Unknown";
-    }
-
-    return {
-      origin,
-      normalizedPath: normalizePagePath(normalizedPath),
-      title: title ?? snapshotTitle,
-    };
-  }
-
-  return pageIdentityFromSnapshotText(snapshotText);
-}
-
 export function parseQuerySnapshotCliArgs(args: Record<string, string | boolean>): QuerySnapshotCliArgs {
   const tabRef = optionalCliStringArg(args, "tab-ref", "tabRef");
+  const snapshotRef = optionalCliStringArg(args, "snapshot-ref", "snapshotRef");
   const snapshotPath = optionalCliStringArg(args, "snapshot-path", "snapshotPath");
   const snapshotText = optionalCliStringArg(args, "snapshot-text", "snapshotText");
   const text = optionalCliStringArg(args, "text", "text");
@@ -119,8 +71,8 @@ export function parseQuerySnapshotCliArgs(args: Record<string, string | boolean>
   const title = optionalCliStringArg(args, "title", "title");
   const modeValue = requireCliStringArg(args, "mode", "mode");
 
-  if (tabRef === undefined && snapshotPath === undefined && snapshotText === undefined) {
-    throw new Error("query-snapshot requires --tab-ref, --snapshot-path, or --snapshot-text");
+  if (tabRef === undefined && snapshotRef === undefined && snapshotPath === undefined && snapshotText === undefined) {
+    throw new Error("query-snapshot requires --tab-ref, --snapshot-ref, --snapshot-path, or --snapshot-text");
   }
 
   const selectorText = text ?? query;
@@ -138,6 +90,7 @@ export function parseQuerySnapshotCliArgs(args: Record<string, string | boolean>
   return {
     mode,
     tabRef,
+    snapshotRef,
     snapshotPath,
     snapshotText,
     text: selectorText,
@@ -151,26 +104,76 @@ export function parseQuerySnapshotCliArgs(args: Record<string, string | boolean>
   };
 }
 
-export async function runQuerySnapshotCommand(args: QuerySnapshotCliArgs) {
-  const snapshotText = await resolveSnapshotText(args);
-  const page = resolvePage(args, snapshotText);
-  const store = resolveKnowledgeStore(args);
-  const knowledgeHits = await store.queryByPage(page);
-
-  return querySnapshotText({
-    snapshotText,
+function buildSnapshotQueryRequest(args: QuerySnapshotCliArgs): SessionRpcRequestMap["querySnapshot"] {
+  return {
+    ...(args.tabRef !== undefined ? { tabRef: args.tabRef } : {}),
+    ...(args.snapshotRef !== undefined ? { snapshotRef: args.snapshotRef } : {}),
+    ...(args.snapshotPath !== undefined ? { snapshotPath: path.resolve(args.snapshotPath) } : {}),
     mode: args.mode,
-    text: args.text,
-    role: args.role,
-    uid: args.uid,
-    ref: args.ref,
-    knowledgeHits: knowledgeHits.map((record) => ({
-      guide: record.guide,
-      keywords: record.keywords,
-      rationale: record.rationale,
-    })),
-    page,
-  });
+    ...(args.text !== undefined ? { query: args.text } : {}),
+    ...(args.uid !== undefined ? { uid: args.uid } : {}),
+    includeSnapshot: true,
+  };
+}
+
+function resolveSessionQueryResult(args: QuerySnapshotCliArgs, value: unknown): ReturnType<typeof querySnapshotText> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("querySnapshot session response must be an object");
+  }
+
+  const result = value as Record<string, unknown>;
+  if (result.mode === "search" || result.mode === "auto" || result.mode === "full") {
+    return value as ReturnType<typeof querySnapshotText>;
+  }
+
+  if (typeof result.snapshotText === "string") {
+    const page =
+      typeof result.page === "object" && result.page !== null
+        ? (result.page as ReturnType<typeof pageIdentityFromSnapshotText>)
+        : pageIdentityFromSnapshotText(result.snapshotText);
+    return querySnapshotText({
+      snapshotText: result.snapshotText,
+      mode: args.mode,
+      text: args.text,
+      role: args.role,
+      uid: args.uid,
+      ref: args.ref,
+      knowledgeHits: Array.isArray(result.knowledgeHits) ? (result.knowledgeHits as ReturnType<typeof querySnapshotText>["knowledgeHits"]) : [],
+      page,
+    });
+  }
+
+  throw new Error("querySnapshot session response must include snapshotText or a completed query result");
+}
+
+export async function runQuerySnapshotCommand(args: QuerySnapshotCliArgs): Promise<ReturnType<typeof querySnapshotText>> {
+  if (args.snapshotText !== undefined && args.tabRef === undefined && args.snapshotRef === undefined && args.snapshotPath === undefined) {
+    const page = (() => {
+      if (args.origin && args.path) {
+        return {
+          origin: args.origin,
+          normalizedPath: normalizePagePath(args.path),
+          title: args.title ?? "Unknown",
+        };
+      }
+
+      return pageIdentityFromSnapshotText(args.snapshotText);
+    })();
+
+    return querySnapshotText({
+      snapshotText: args.snapshotText,
+      mode: args.mode,
+      text: args.text,
+      role: args.role,
+      uid: args.uid,
+      ref: args.ref,
+      knowledgeHits: [],
+      page,
+    });
+  }
+
+  const sessionResult = await sendSessionRpcRequest("querySnapshot", buildSnapshotQueryRequest(args));
+  return resolveSessionQueryResult(args, sessionResult);
 }
 
 async function main(): Promise<void> {

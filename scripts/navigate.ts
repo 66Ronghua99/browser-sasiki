@@ -1,31 +1,29 @@
 import process from "node:process";
 
-import { formatCliError, isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
 import {
-  requireCliStringArg,
-  runBrowserAction,
-  runWithBrowserActionDeps,
-  type BrowserActionDeps,
-} from "../lib/browser-action.js";
+  formatCliError,
+  isDirectCliInvocation,
+  readCliArgs,
+  sendSessionRpcRequest,
+  withSnapshotRefFirst,
+} from "../lib/cli.js";
+import { requireCliStringArg } from "../lib/browser-action.js";
+import { assertSessionRpcResult } from "../runtime/session-rpc-types.js";
+import type { ActionResult } from "../lib/types.js";
 
 export async function runNavigateCommand(
   args: { tabRef: string; url: string },
-  deps?: BrowserActionDeps,
-) {
-  return runWithBrowserActionDeps(deps, (resolvedDeps) =>
-    runBrowserAction(
-      {
-        action: "navigate",
-        tabRef: args.tabRef,
-        toolName: "navigate_page",
-        toolArgs: {
-          type: "url",
-          url: args.url,
-        },
-      },
-      resolvedDeps,
-    ),
-  );
+): Promise<ActionResult> {
+  const result = await sendSessionRpcRequest("navigate", {
+    tabRef: args.tabRef,
+    url: args.url,
+  });
+  assertSessionRpcResult(result);
+  const actionResult = {
+    ...result,
+    action: "navigate" as const,
+  };
+  return withSnapshotRefFirst(actionResult);
 }
 
 export function parseNavigateCliArgs(args: Record<string, string | boolean>): {

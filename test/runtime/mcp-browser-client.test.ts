@@ -68,10 +68,56 @@ class StubToolClient implements ToolClient {
 }
 
 test("browser action defaults to chrome-devtools-mcp auto-connect launch args", () => {
-  assert.deepEqual(resolveBrowserMcpLaunchOptions({}), {
+  assert.deepEqual(resolveBrowserMcpLaunchOptions({}, { runningChromeCommands: [] }), {
     command: "npx",
     args: ["chrome-devtools-mcp@latest", "--autoConnect"],
   });
+});
+
+test("browser action prefers an explicit browser URL env override", () => {
+  assert.deepEqual(
+    resolveBrowserMcpLaunchOptions({
+      SASIKI_BROWSER_URL: "http://127.0.0.1:64942",
+    }),
+    {
+      command: "npx",
+      args: ["chrome-devtools-mcp@latest", "--browserUrl", "http://127.0.0.1:64942"],
+    },
+  );
+});
+
+test("browser action auto-detects an existing remote-debugging Chrome before falling back to autoConnect", () => {
+  assert.deepEqual(
+    resolveBrowserMcpLaunchOptions(
+      {},
+      {
+        runningChromeCommands: [
+          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --remote-debugging-port=64942 --user-data-dir=/tmp/profile",
+        ],
+      },
+    ),
+    {
+      command: "npx",
+      args: ["chrome-devtools-mcp@latest", "--browserUrl", "http://127.0.0.1:64942"],
+    },
+  );
+});
+
+test("browser action auto-detects an existing remote-debugging Chrome address override", () => {
+  assert.deepEqual(
+    resolveBrowserMcpLaunchOptions(
+      {},
+      {
+        runningChromeCommands: [
+          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --remote-debugging-address=0.0.0.0 --remote-debugging-port=9333",
+        ],
+      },
+    ),
+    {
+      command: "npx",
+      args: ["chrome-devtools-mcp@latest", "--browserUrl", "http://0.0.0.0:9333"],
+    },
+  );
 });
 
 test("browser action keeps explicit MCP launch env overrides", () => {

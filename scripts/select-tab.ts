@@ -1,36 +1,34 @@
 import process from "node:process";
 
-import { formatCliError, isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
+import {
+  formatCliError,
+  isDirectCliInvocation,
+  readCliArgs,
+  sendSessionRpcRequest,
+  withSnapshotRefFirst,
+} from "../lib/cli.js";
 import {
   parseCliIntegerArg,
   readCliStringArg,
   requireCliIntegerArg,
   requireCliStringArg,
-  runBrowserAction,
-  runWithBrowserActionDeps,
-  type BrowserActionDeps,
 } from "../lib/browser-action.js";
+import { assertSessionRpcResult } from "../runtime/session-rpc-types.js";
+import type { ActionResult } from "../lib/types.js";
 
 export async function runSelectTabCommand(
   args: { tabRef: string; pageId: number },
-  deps?: BrowserActionDeps,
-) {
-  return runWithBrowserActionDeps(deps, (resolvedDeps) =>
-    runBrowserAction(
-      {
-        action: "select-tab",
-        tabRef: args.tabRef,
-        toolName: "select_page",
-        toolArgs: {
-          pageId: args.pageId,
-          bringToFront: false,
-        },
-        preselectBoundTab: false,
-        nextBrowserTabIndex: args.pageId,
-      },
-      resolvedDeps,
-    ),
-  );
+): Promise<ActionResult> {
+  const result = await sendSessionRpcRequest("selectTab", {
+    tabRef: args.tabRef,
+    pageId: args.pageId,
+  });
+  assertSessionRpcResult(result);
+  const actionResult = {
+    ...result,
+    action: "select-tab" as const,
+  };
+  return withSnapshotRefFirst(actionResult);
 }
 
 export function parseSelectTabCliArgs(args: Record<string, string | boolean>): {

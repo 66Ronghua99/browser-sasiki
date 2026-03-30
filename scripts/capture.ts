@@ -1,19 +1,30 @@
 import process from "node:process";
 
-import { formatCliError, isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
 import {
-  optionalCliStringArg,
-  parseCliIntegerArg,
-  runCaptureFlow,
-  runWithBrowserActionDeps,
-  type BrowserActionDeps,
-} from "../lib/browser-action.js";
+  formatCliError,
+  isDirectCliInvocation,
+  readCliArgs,
+  sendSessionRpcRequest,
+  withSnapshotRefFirst,
+} from "../lib/cli.js";
+import { optionalCliStringArg, parseCliIntegerArg } from "../lib/browser-action.js";
+import type { CaptureResult } from "../lib/types.js";
+import { assertSessionCaptureResult } from "../runtime/session-rpc-types.js";
 
 export async function runCaptureCommand(
   args: { tabIndex?: number; tabRef?: string },
-  deps?: BrowserActionDeps,
-) {
-  return runWithBrowserActionDeps(deps, (resolvedDeps) => runCaptureFlow(args, resolvedDeps));
+): Promise<CaptureResult> {
+  const params: { tabIndex?: number; tabRef?: string } = {};
+  if (args.tabIndex !== undefined) {
+    params.tabIndex = args.tabIndex;
+  }
+  if (args.tabRef !== undefined) {
+    params.tabRef = args.tabRef;
+  }
+
+  const result = await sendSessionRpcRequest("capture", params);
+  assertSessionCaptureResult(result);
+  return withSnapshotRefFirst(result);
 }
 
 export function parseCaptureCliArgs(args: Record<string, string | boolean>): {

@@ -1,8 +1,12 @@
 import process from "node:process";
-import path from "node:path";
 
-import { formatCliError, isDirectCliInvocation, readCliArgs } from "../lib/cli.js";
-import { defaultRuntimeRoots } from "../lib/paths.js";
+import {
+  formatCliError,
+  hasSessionRpcRequestSenderOverride,
+  isDirectCliInvocation,
+  readCliArgs,
+  sendSessionRpcRequest,
+} from "../lib/cli.js";
 import { KnowledgeStore, type DurableKnowledgeRecord } from "../lib/knowledge-store.js";
 import { normalizePagePath } from "../lib/page-identity.js";
 
@@ -11,13 +15,34 @@ function cliString(args: Record<string, string | boolean>, key: string): string 
   return typeof value === "string" ? value : undefined;
 }
 
-function resolveStore(args: Record<string, string | boolean>): KnowledgeStore {
-  const knowledgeFile = cliString(args, "knowledge-file") ?? defaultRuntimeRoots().knowledgeFile;
-  return new KnowledgeStore(path.resolve(knowledgeFile));
+function buildPage(args: Record<string, string | boolean>): {
+  origin: string;
+  normalizedPath: string;
+  title: string;
+} | undefined {
+  const origin = cliString(args, "origin");
+  const normalizedPath = cliNormalizedPath(args);
+  if (!origin || !normalizedPath) {
+    return undefined;
+  }
+
+  return {
+    origin,
+    normalizedPath: normalizePagePath(normalizedPath),
+    title: cliString(args, "title") ?? "Unknown",
+  };
 }
 
 function cliMaybeKnowledgeId(args: Record<string, string | boolean>): string | undefined {
   return cliString(args, "id") ?? cliString(args, "knowledge-id");
+}
+
+function cliMaybeSnapshotRef(args: Record<string, string | boolean>): string | undefined {
+  return cliString(args, "snapshot-ref") ?? cliString(args, "snapshotRef");
+}
+
+function cliMaybeTabRef(args: Record<string, string | boolean>): string | undefined {
+  return cliString(args, "tab-ref") ?? cliString(args, "tabRef");
 }
 
 function cliNormalizedPath(args: Record<string, string | boolean>): string | undefined {
@@ -42,37 +67,44 @@ export type ReadKnowledgeResult =
 
 export async function runReadKnowledgeCommand(args: Record<string, string | boolean>): Promise<ReadKnowledgeResult> {
   const knowledgeId = cliMaybeKnowledgeId(args);
-  if (knowledgeId) {
-    const store = resolveStore(args);
-    const knowledge = await store.readById(knowledgeId);
+  const knowledgeRef = cliString(args, "knowledge-ref") ?? cliString(args, "knowledgeRef");
+  const snapshotRef = cliMaybeSnapshotRef(args);
+  const tabRef = cliMaybeTabRef(args);
+  const page = buildPage(args);
+  const knowledgeFile = cliString(args, "knowledge-file");
+
+  if (knowledgeFile && !hasSessionRpcRequestSenderOverride()) {
+    const store = new KnowledgeStore(knowledgeFile);
+    if (knowledgeId || knowledgeRef) {
+      return {
+        ok: true as const,
+        mode: "id",
+        knowledge: await store.readById(knowledgeRef ?? knowledgeId ?? ""),
+      };
+    }
+    if (!page) {
+      throw new Error("read-knowledge requires --origin and --normalized-path or --id");
+    }
     return {
       ok: true as const,
-      mode: "id",
-      knowledge,
+      mode: "page",
+      page: {
+        origin: page.origin,
+        normalizedPath: page.normalizedPath,
+      },
+      knowledge: await store.queryByPage(page),
     };
   }
 
-  const origin = cliString(args, "origin");
-  const normalizedPath = cliNormalizedPath(args);
-  if (!origin || !normalizedPath) {
-    throw new Error("read-knowledge requires --origin and --normalized-path or --id");
-  }
-
-  const store = resolveStore(args);
-  const knowledge = await store.queryByPage({
-    origin,
-    normalizedPath: normalizePagePath(normalizedPath),
-  });
-
-  return {
-    ok: true as const,
-    mode: "page",
-    page: {
-      origin,
-      normalizedPath: normalizePagePath(normalizedPath),
-    },
-    knowledge,
+  const request = {
+    ...(tabRef !== undefined ? { tabRef } : {}),
+    ...(snapshotRef !== undefined ? { snapshotRef } : {}),
+    ...(knowledgeId !== undefined ? { knowledgeRef: knowledgeId } : {}),
+    ...(knowledgeRef !== undefined ? { knowledgeRef } : {}),
+    ...(page !== undefined ? { page } : {}),
   };
+
+  return (await sendSessionRpcRequest("readKnowledge", request)) as ReadKnowledgeResult;
 }
 
 async function main(): Promise<void> {

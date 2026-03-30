@@ -4,38 +4,42 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { setSessionRpcRequestSenderForTesting } from "../../lib/cli.js";
 import { querySnapshotText, type SnapshotQuerySearchResult } from "../../lib/knowledge-query.js";
 import { TabBindingStore } from "../../lib/tab-binding-store.js";
+import { runReadKnowledgeCommand } from "../../scripts/read-knowledge.js";
 import { parseQuerySnapshotCliArgs, runQuerySnapshotCommand } from "../../scripts/query-snapshot.js";
+import { runRecordKnowledgeCommand } from "../../scripts/record-knowledge.js";
 
 const snapshotText = [
-  "### Open tabs",
-  "- 0: (current) [Inbox](https://example.com/chat/inbox/current)",
-  "### Page",
-  "- Page URL: https://example.com/chat/inbox/current",
-  "- Page Title: Inbox",
-  "### Snapshot",
-  "```yaml",
-  "- button \"Customer messages\" [ref=msg]",
-  "- button \"Invite [Beta]\" [active] [ref=invite] [cursor=pointer]:",
-  "- tab \"未分配\" [active] [selected] [ref=e193] [cursor=pointer]:",
-  "- text \"No chats yet\"",
-  "```",
+  "## Latest page snapshot",
+  'uid=1_0 RootWebArea "Inbox" url="https://example.com/chat/inbox/current"',
+  '  uid=1_1 button "Customer messages"',
+  '  uid=1_2 button "Invite [Beta]"',
+  '  uid=1_3 tab "未分配"',
+  '  uid=1_4 StaticText "No chats yet"',
+  "  uid=1_5 textbox",
+].join("\n");
+
+const waitForSnapshotText = [
+  'Element matching one of ["Customer messages"] found.',
+  snapshotText,
 ].join("\n");
 
 function assertSearchResult(result: ReturnType<typeof querySnapshotText>): asserts result is SnapshotQuerySearchResult {
   assert.equal(result.mode, "search");
 }
 
-test("querySnapshotText full mode returns the raw snapshot content", () => {
+test("querySnapshotText full mode parses page identity from a Chrome DevTools snapshot envelope", () => {
   const result = querySnapshotText({
-    snapshotText,
+    snapshotText: waitForSnapshotText,
     mode: "full",
   });
 
   assert.equal(result.mode, "full");
-  assert.equal(result.snapshotText, snapshotText);
+  assert.equal(result.snapshotText, waitForSnapshotText);
   assert.equal(result.page.normalizedPath, "/chat/inbox/current");
+  assert.equal(result.page.title, "Inbox");
 });
 
 test("querySnapshotText search mode finds matching snapshot elements", () => {
@@ -47,20 +51,20 @@ test("querySnapshotText search mode finds matching snapshot elements", () => {
 
   assertSearchResult(result);
   assert.equal(result.matches.length, 1);
-  assert.equal(result.matches[0].ref, "msg");
+  assert.equal(result.matches[0].uid, "1_1");
   assert.equal(result.matches[0].role, "button");
 });
 
-test("querySnapshotText search mode parses ref-bearing YAML lines with extra attributes", () => {
+test("querySnapshotText search mode parses uid selectors from accessibility-tree lines", () => {
   const result = querySnapshotText({
     snapshotText,
     mode: "search",
-    ref: "e193",
+    uid: "1_3",
   });
 
   assertSearchResult(result);
   assert.equal(result.matches.length, 1);
-  assert.equal(result.matches[0].ref, "e193");
+  assert.equal(result.matches[0].uid, "1_3");
   assert.equal(result.matches[0].role, "tab");
   assert.equal(result.matches[0].text, "未分配");
 });
@@ -69,62 +73,60 @@ test("querySnapshotText search mode preserves bracket text inside quoted labels"
   const result = querySnapshotText({
     snapshotText,
     mode: "search",
-    ref: "invite",
+    uid: "1_2",
   });
 
   assertSearchResult(result);
   assert.equal(result.matches.length, 1);
-  assert.equal(result.matches[0].ref, "invite");
+  assert.equal(result.matches[0].uid, "1_2");
   assert.equal(result.matches[0].role, "button");
   assert.equal(result.matches[0].text, "Invite [Beta]");
 });
 
-test("querySnapshotText parses role-only bare nodes and trims structural colons", () => {
+test("querySnapshotText parses role-only accessibility nodes without labels", () => {
   const roleOnlySnapshotText = [
-    "### Page",
-    "- Page URL: https://example.com/notes",
-    "- Page Title: Notes",
-    "### Snapshot",
-    "```yaml",
-    "- img [ref=e1]",
-    "- button [ref=e109]:",
-    "- text [ref=t1]: 测试笔记标题",
-    "```",
+    "## Latest page snapshot",
+    'uid=1_0 RootWebArea "Notes" url="https://example.com/notes"',
+    "  uid=1_1 image",
+    "  uid=1_2 button",
+    '  uid=1_3 StaticText "测试笔记标题"',
   ].join("\n");
 
   const imgResult = querySnapshotText({
     snapshotText: roleOnlySnapshotText,
     mode: "search",
-    role: "img",
+    role: "image",
   });
 
   assertSearchResult(imgResult);
   assert.equal(imgResult.matches.length, 1);
-  assert.equal(imgResult.matches[0].role, "img");
+  assert.equal(imgResult.matches[0].role, "image");
   assert.equal(imgResult.matches[0].text, "");
-  assert.equal(imgResult.matches[0].ref, "e1");
+  assert.equal(imgResult.matches[0].uid, "1_1");
 
   const buttonResult = querySnapshotText({
     snapshotText: roleOnlySnapshotText,
     mode: "search",
-    ref: "e109",
+    uid: "1_2",
   });
 
   assertSearchResult(buttonResult);
   assert.equal(buttonResult.matches.length, 1);
   assert.equal(buttonResult.matches[0].role, "button");
   assert.equal(buttonResult.matches[0].text, "");
+  assert.equal(buttonResult.matches[0].uid, "1_2");
 
   const textResult = querySnapshotText({
     snapshotText: roleOnlySnapshotText,
     mode: "search",
-    ref: "t1",
+    uid: "1_3",
   });
 
   assertSearchResult(textResult);
   assert.equal(textResult.matches.length, 1);
-  assert.equal(textResult.matches[0].role, "text");
+  assert.equal(textResult.matches[0].role, "StaticText");
   assert.equal(textResult.matches[0].text, "测试笔记标题");
+  assert.equal(textResult.matches[0].uid, "1_3");
 });
 
 test("querySnapshotText auto mode falls back to full snapshot content without knowledge", () => {
@@ -192,19 +194,36 @@ test("query-snapshot resolves the latest bound snapshot from --tab-ref", async (
   const harness = await createQueryHarness();
   const snapshotPath = path.join(harness.snapshotsDir, "latest.md");
   await writeFile(snapshotPath, snapshotText, "utf8");
-  await harness.tabBindings.write({
-    tabRef: "tab_demo",
-    browserTabIndex: 1,
-    snapshotPath,
-    page: {
-      origin: "https://example.com",
-      normalizedPath: "/chat/inbox/current",
-      title: "Inbox",
-    },
-  });
 
-  const previousHome = process.env.HOME;
-  process.env.HOME = harness.homeDir;
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  setSessionRpcRequestSenderForTesting(async (request) => {
+    requests.push({ method: request.method, params: request.params as Record<string, unknown> });
+
+    return {
+      ok: true as const,
+      mode: "search" as const,
+      tabRef: "tab_demo",
+      snapshotRef: "snapshot_demo",
+      snapshotPath,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/chat/inbox/current",
+        title: "Inbox",
+      },
+      knowledgeHits: [],
+      summary: "resolved from the session",
+      matches: [
+        {
+          lineNumber: 2,
+          raw: '  uid=1_1 button "Customer messages"',
+          role: "button",
+          text: "Customer messages",
+          uid: "1_1",
+          ref: "1_1",
+        },
+      ],
+    };
+  });
 
   try {
     const result = await runQuerySnapshotCommand(
@@ -216,15 +235,146 @@ test("query-snapshot resolves the latest bound snapshot from --tab-ref", async (
       }),
     );
 
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.method, "querySnapshot");
+    assert.equal(requests[0]?.params.tabRef, "tab_demo");
     assertSearchResult(result);
     assert.equal(result.matches.length, 1);
-    assert.equal(result.matches[0]?.ref, "msg");
+    assert.equal(result.matches[0]?.uid, "1_1");
   } finally {
-    if (previousHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = previousHome;
+    setSessionRpcRequestSenderForTesting(undefined);
+  }
+});
+
+test("query-snapshot accepts --snapshot-ref and delegates to the session seam", async () => {
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  setSessionRpcRequestSenderForTesting(async (request) => {
+    requests.push({ method: request.method, params: request.params as Record<string, unknown> });
+
+    return {
+      ok: true as const,
+      mode: "search" as const,
+      tabRef: "tab_demo",
+      snapshotRef: "snapshot_demo",
+      snapshotPath: "/tmp/browser-skill/snapshots/snapshot-demo.md",
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/chat/inbox/current",
+        title: "Inbox",
+      },
+      knowledgeHits: [],
+      summary: "resolved by the daemon",
+      matches: [
+        {
+          lineNumber: 2,
+          raw: '  uid=1_1 button "Customer messages"',
+          role: "button",
+          text: "Customer messages",
+          uid: "1_1",
+          ref: "1_1",
+        },
+      ],
+    };
+  });
+
+  try {
+    const result = await runQuerySnapshotCommand(
+      parseQuerySnapshotCliArgs({
+        "snapshot-ref": "snapshot_demo",
+        mode: "search",
+        query: "Customer messages",
+      }),
+    );
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.method, "querySnapshot");
+    assert.equal(requests[0]?.params.snapshotRef, "snapshot_demo");
+    assertSearchResult(result);
+    assert.equal(result.matches.length, 1);
+    assert.equal(result.matches[0]?.uid, "1_1");
+    assert.equal(result.page.normalizedPath, "/chat/inbox/current");
+  } finally {
+    setSessionRpcRequestSenderForTesting(undefined);
+  }
+});
+
+test("read-knowledge and record-knowledge can run through the session seam", async () => {
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  setSessionRpcRequestSenderForTesting(async (request) => {
+    requests.push({ method: request.method, params: request.params as Record<string, unknown> });
+
+    if (request.method === "readKnowledge") {
+      return {
+        ok: true as const,
+        mode: "page" as const,
+        page: {
+          origin: "https://example.com",
+          normalizedPath: "/chat/inbox/current",
+        },
+        knowledge: [
+          {
+            id: "knowledge_demo",
+            page: {
+              origin: "https://example.com",
+              normalizedPath: "/chat/inbox/current",
+            },
+            guide: "Check the conversation list first.",
+            keywords: ["inbox", "conversation"],
+            createdAt: "2026-03-30T00:00:00.000Z",
+            updatedAt: "2026-03-30T00:00:00.000Z",
+          },
+        ],
+      };
     }
+
+    return {
+      ok: true as const,
+      record: {
+        id: "knowledge_demo",
+        page: {
+          origin: "https://example.com",
+          normalizedPath: "/chat/inbox/current",
+        },
+        guide: "Check the conversation list first.",
+        keywords: ["inbox", "conversation"],
+        createdAt: "2026-03-30T00:00:00.000Z",
+        updatedAt: "2026-03-30T00:00:00.000Z",
+        sourceSnapshotPath: "/tmp/browser-skill/snapshots/snapshot-demo.md",
+        sourceAction: "capture",
+      },
+    };
+  });
+
+  try {
+    const readResult = await runReadKnowledgeCommand({
+      "snapshot-ref": "snapshot_demo",
+      origin: "https://example.com",
+      "normalized-path": "/chat/inbox/current",
+      "knowledge-file": path.join(os.tmpdir(), "ignored.jsonl"),
+    });
+
+    assert.equal(requests[0]?.method, "readKnowledge");
+    assert.equal(requests[0]?.params.snapshotRef, "snapshot_demo");
+    assert.equal(readResult.ok, true);
+    assert.equal(readResult.mode, "page");
+    assert.equal(readResult.page.normalizedPath, "/chat/inbox/current");
+    assert.equal(readResult.knowledge.length, 1);
+
+    const recordResult = await runRecordKnowledgeCommand({
+      "snapshot-ref": "snapshot_demo",
+      origin: "https://example.com",
+      "normalized-path": "/chat/inbox/current",
+      guide: "Check the conversation list first.",
+      keywords: "inbox, conversation",
+      "knowledge-file": path.join(os.tmpdir(), "ignored.jsonl"),
+    });
+
+    assert.equal(requests[1]?.method, "recordKnowledge");
+    assert.equal(requests[1]?.params.snapshotRef, "snapshot_demo");
+    assert.equal(recordResult.ok, true);
+    assert.equal(recordResult.record.id, "knowledge_demo");
+  } finally {
+    setSessionRpcRequestSenderForTesting(undefined);
   }
 });
 
@@ -268,7 +418,7 @@ test("query-snapshot rejects --mode search without a selector", () => {
         "snapshot-text": snapshotText,
         mode: "search",
       }),
-    /search.*requires.*text|query|role|ref/i,
+    /search.*requires.*text|query|role|uid|ref/i,
   );
 });
 
@@ -285,7 +435,37 @@ test("query-snapshot maps the documented --query alias to text search", async ()
 
   assertSearchResult(result);
   assert.equal(result.matches.length, 1);
-  assert.equal(result.matches[0]?.ref, "msg");
+  assert.equal(result.matches[0]?.uid, "1_1");
+});
+
+test("query-snapshot accepts the documented --uid selector and preserves legacy --ref as an alias", async () => {
+  const harness = await createQueryHarness();
+
+  const uidResult = await runQuerySnapshotCommand(
+    parseQuerySnapshotCliArgs({
+      "snapshot-text": snapshotText,
+      mode: "search",
+      uid: "1_3",
+      "knowledge-file": harness.knowledgeFile,
+    }),
+  );
+
+  assertSearchResult(uidResult);
+  assert.equal(uidResult.matches.length, 1);
+  assert.equal(uidResult.matches[0]?.uid, "1_3");
+
+  const legacyAliasResult = await runQuerySnapshotCommand(
+    parseQuerySnapshotCliArgs({
+      "snapshot-text": snapshotText,
+      mode: "search",
+      ref: "1_3",
+      "knowledge-file": harness.knowledgeFile,
+    }),
+  );
+
+  assertSearchResult(legacyAliasResult);
+  assert.equal(legacyAliasResult.matches.length, 1);
+  assert.equal(legacyAliasResult.matches[0]?.uid, "1_3");
 });
 
 test("query-snapshot still supports explicit --snapshot-path after parser validation", async () => {
@@ -293,16 +473,53 @@ test("query-snapshot still supports explicit --snapshot-path after parser valida
   const snapshotPath = path.join(harness.snapshotsDir, "explicit.md");
   await writeFile(snapshotPath, snapshotText, "utf8");
 
-  const result = await runQuerySnapshotCommand(
-    parseQuerySnapshotCliArgs({
-      "snapshot-path": snapshotPath,
-      mode: "search",
-      query: "Customer messages",
-      "knowledge-file": harness.knowledgeFile,
-    }),
-  );
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  setSessionRpcRequestSenderForTesting(async (request) => {
+    requests.push({ method: request.method, params: request.params as Record<string, unknown> });
 
-  assertSearchResult(result);
-  assert.equal(result.matches.length, 1);
-  assert.equal(result.matches[0]?.ref, "msg");
+    return {
+      ok: true as const,
+      mode: "search" as const,
+      tabRef: "tab_demo",
+      snapshotRef: "snapshot_demo",
+      snapshotPath,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/chat/inbox/current",
+        title: "Inbox",
+      },
+      knowledgeHits: [],
+      summary: "resolved from the session",
+      matches: [
+        {
+          lineNumber: 2,
+          raw: '  uid=1_1 button "Customer messages"',
+          role: "button",
+          text: "Customer messages",
+          uid: "1_1",
+          ref: "1_1",
+        },
+      ],
+    };
+  });
+
+  try {
+    const result = await runQuerySnapshotCommand(
+      parseQuerySnapshotCliArgs({
+        "snapshot-path": snapshotPath,
+        mode: "search",
+        query: "Customer messages",
+        "knowledge-file": harness.knowledgeFile,
+      }),
+    );
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.method, "querySnapshot");
+    assert.equal(requests[0]?.params.snapshotPath, snapshotPath);
+    assertSearchResult(result);
+    assert.equal(result.matches.length, 1);
+    assert.equal(result.matches[0]?.uid, "1_1");
+  } finally {
+    setSessionRpcRequestSenderForTesting(undefined);
+  }
 });

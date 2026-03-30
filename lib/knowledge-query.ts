@@ -7,6 +7,7 @@ export interface SnapshotQueryInput {
   mode: "search" | "auto" | "full";
   text?: string;
   role?: string;
+  uid?: string;
   ref?: string;
   knowledgeHits?: KnowledgeHit[];
   page?: SkillPageIdentity;
@@ -17,6 +18,7 @@ export interface SnapshotQueryMatch {
   raw: string;
   role: string | null;
   text: string;
+  uid: string | null;
   ref: string | null;
 }
 
@@ -43,7 +45,7 @@ function normalizeText(value: string): string {
 }
 
 function elementTokens(element: ParsedSnapshotElement): string {
-  return [element.role ?? "", element.text, element.ref ?? "", element.raw]
+  return [element.role ?? "", element.text, element.uid ?? "", element.ref ?? "", element.raw]
     .join(" ")
     .toLowerCase();
 }
@@ -53,10 +55,11 @@ function buildKnowledgeTerms(knowledgeHits: KnowledgeHit[]): string[] {
 }
 
 function matchesCriteria(element: ParsedSnapshotElement, input: SnapshotQueryInput): boolean {
-  if (input.ref && element.ref !== input.ref) {
+  const expectedUid = input.uid ?? input.ref;
+  if (expectedUid && element.uid !== expectedUid && element.ref !== expectedUid) {
     return false;
   }
-  if (input.role && element.role !== input.role) {
+  if (input.role && normalizeText(element.role ?? "") !== normalizeText(input.role)) {
     return false;
   }
   if (input.text && !elementTokens(element).includes(normalizeText(input.text))) {
@@ -80,6 +83,7 @@ function toMatch(element: ParsedSnapshotElement): SnapshotQueryMatch {
     raw: element.raw,
     role: element.role,
     text: element.text,
+    uid: element.uid,
     ref: element.ref,
   };
 }
@@ -115,7 +119,11 @@ export function querySnapshotText(input: SnapshotQueryInput): SnapshotQueryResul
 
   const explicitMatches = parsedSnapshot.elements.filter((element) => matchesCriteria(element, input));
   const matches =
-    input.mode === "auto" && input.text === undefined && input.role === undefined && input.ref === undefined
+    input.mode === "auto" &&
+    input.text === undefined &&
+    input.role === undefined &&
+    input.uid === undefined &&
+    input.ref === undefined
       ? parsedSnapshot.elements.filter((element) => matchesKnowledge(element, knowledgeHits))
       : explicitMatches;
 

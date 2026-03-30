@@ -9,5 +9,5 @@
     "esModuleInterop": true,
     "skipLibCheck": true
   },
-  "include": ["lib/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+  "include": ["lib/**/*.ts", "runtime/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
 }
