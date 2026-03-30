@@ -20,6 +20,10 @@ function cliMaybeKnowledgeId(args: Record<string, string | boolean>): string | u
   return cliString(args, "id") ?? cliString(args, "knowledge-id");
 }
 
+function cliNormalizedPath(args: Record<string, string | boolean>): string | undefined {
+  return cliString(args, "normalized-path") ?? cliString(args, "path");
+}
+
 export type ReadKnowledgeResult =
   | {
       ok: true;
@@ -49,9 +53,9 @@ export async function runReadKnowledgeCommand(args: Record<string, string | bool
   }
 
   const origin = cliString(args, "origin");
-  const normalizedPath = cliString(args, "path");
+  const normalizedPath = cliNormalizedPath(args);
   if (!origin || !normalizedPath) {
-    throw new Error("read-knowledge requires --origin and --path or --id");
+    throw new Error("read-knowledge requires --origin and --normalized-path or --id");
   }
 
   const store = resolveStore(args);

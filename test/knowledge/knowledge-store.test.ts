@@ -64,7 +64,7 @@ test("read knowledge can fetch a record by id and fails for a missing id", async
     "knowledge-file": storePath,
     id: "k-read-1",
     origin: "https://example.com",
-    path: "/chat/inbox/current/",
+    "normalized-path": "/chat/inbox/current/",
     guide: "Inspect the message list first.",
     keywords: "inbox,message list",
   });
@@ -85,7 +85,7 @@ test("read knowledge can fetch a record by id and fails for a missing id", async
   const readResult = await runReadKnowledgeCommand({
     "knowledge-file": storePath,
     origin: "https://example.com",
-    path: "/chat/inbox/current",
+    "normalized-path": "/chat/inbox/current",
   });
 
   assert.equal(readResult.ok, true);
@@ -102,6 +102,32 @@ test("read knowledge can fetch a record by id and fails for a missing id", async
       }),
     /Knowledge record not found for id missing-id/
   );
+});
+
+test("normalized-path alias is accepted by record and read scripts", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-knowledge-"));
+  const storePath = path.join(root, "page-knowledge.jsonl");
+
+  const recordResult = await runRecordKnowledgeCommand({
+    "knowledge-file": storePath,
+    origin: "https://example.com",
+    "normalized-path": "/chat/inbox/current/",
+    guide: "Alias guidance.",
+    keywords: "alias",
+  });
+
+  assert.equal(recordResult.record.page.normalizedPath, "/chat/inbox/current");
+
+  const readResult = await runReadKnowledgeCommand({
+    "knowledge-file": storePath,
+    origin: "https://example.com",
+    "normalized-path": "/chat/inbox/current",
+  });
+
+  assert.equal(readResult.mode, "page");
+  assert.equal(readResult.page.normalizedPath, "/chat/inbox/current");
+  assert.equal(readResult.knowledge.length, 1);
+  assert.equal(readResult.knowledge[0].guide, "Alias guidance.");
 });
 
 test("recording the same knowledge id replaces stale duplicates for id and page reads", async () => {

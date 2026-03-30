@@ -24,14 +24,18 @@ function parseKeywords(value: string | undefined): string[] {
     .filter((part) => part.length > 0);
 }
 
+function cliNormalizedPath(args: Record<string, string | boolean>): string | undefined {
+  return cliString(args, "normalized-path") ?? cliString(args, "path");
+}
+
 export async function runRecordKnowledgeCommand(args: Record<string, string | boolean>) {
   const origin = cliString(args, "origin");
-  const normalizedPath = cliString(args, "path");
+  const normalizedPath = cliNormalizedPath(args);
   const guide = cliString(args, "guide");
   const keywords = parseKeywords(cliString(args, "keywords"));
 
   if (!origin || !normalizedPath) {
-    throw new Error("record-knowledge requires --origin and --path");
+    throw new Error("record-knowledge requires --origin and --normalized-path");
   }
   if (!guide) {
     throw new Error("record-knowledge requires --guide");

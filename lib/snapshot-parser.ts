@@ -80,6 +80,21 @@ function parseElementBody(body: string): { role: string | null; text: string } |
   };
 }
 
+function stripBareDecorators(content: string): { role: string; text: string; ref: string | null } | null {
+  const match = content.match(
+    /^(?<role>[A-Za-z][\w-]*)(?<decorators>(?:\s+\[[^\]]+\])*)(?:\s*:\s*(?<tail>.*))?$/
+  );
+  if (!match?.groups) {
+    return null;
+  }
+
+  return {
+    role: match.groups.role.trim(),
+    text: match.groups.tail?.trim() ?? "",
+    ref: match.groups.decorators?.match(/\[ref=([^\]\s]+)\]/i)?.[1]?.trim() || null,
+  };
+}
+
 function parseQuotedElementLine(line: string, lineNumber: number, raw: string): ParsedSnapshotElement | null {
   const content = line.trim().slice(2).trim().replace(/^<changed>\s*/i, "");
   const match = content.match(
@@ -111,15 +126,7 @@ function parseBareElementLine(line: string, lineNumber: number, raw: string): Pa
   content = content.slice(2).trim();
   content = content.replace(/^<changed>\s*/i, "");
 
-  const refMatch = content.match(/\[ref=([^\]\s]+)\]/i);
-  const ref = refMatch?.[1]?.trim() || null;
-
-  const body = content
-    .replace(/\s+\[[^\]]+\]/g, " ")
-    .replace(/\s*:\s*$/, "")
-    .trim();
-
-  const parsed = parseElementBody(body);
+  const parsed = stripBareDecorators(content);
   if (!parsed) {
     return null;
   }
@@ -129,7 +136,7 @@ function parseBareElementLine(line: string, lineNumber: number, raw: string): Pa
     raw,
     role: parsed.role,
     text: parsed.text,
-    ref,
+    ref: parsed.ref,
   };
 }
 
