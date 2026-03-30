@@ -1,8 +1,6 @@
 # Browser Skill
 
-Browser Skill is a browser automation skill for coding agents. The most important thing to understand is that this is not meant to be just a pile of helper scripts. It is meant to be the default way an agent performs browser automation work. The current run should be easier to control, and later runs should gradually become cheaper and faster because useful page-level knowledge can accumulate over time.
-
-In other words, browser automation is the first goal and self-improvement is the second goal. If you keep using the skill the intended way, it should become better at repeated browser work without asking the agent to manually rediscover the same page structure every time.
+Browser Skill is a browser automation skill for coding agents. Its core job is to give browser work one stable skill surface, while allowing reusable page-level knowledge to accumulate over time. Browser automation comes first. Self-improvement exists to make later browser automation cheaper and faster.
 
 ## Install
 
@@ -35,7 +33,7 @@ npm install
 After install, the files that matter most are:
 
 - `skill/SKILL.md`, which explains the operating model for the agent
-- `skill/README.md`, which acts as the more detailed operator-facing reference
+- `skill/README.md`, which acts as the install and operator-facing reference
 - `skill/scripts/*.ts`, which are the actual commands the agent runs
 
 ## Runtime Requirements
@@ -46,7 +44,7 @@ After install, the files that matter most are:
   - `SASIKI_BROWSER_MCP_ARGS`
 - a browser session that Playwright MCP can attach to
 
-There is not yet a dedicated `help` command in the package. For now, this README should be treated as the detailed command reference. That is intentional: right now the bigger need is a clear operating model and clear installation and usage documentation, not another wrapper command.
+There is not yet a dedicated `help` command in the package. For now, this README is the install document and the concise command reference.
 
 ## What Gets Stored
 
@@ -55,9 +53,21 @@ There is not yet a dedicated `help` command in the package. For now, this README
 
 The temp directory is disposable runtime state. The knowledge file is the durable artifact you keep with the skill.
 
-## Command Surface
+## Quick Start
 
 Start with `capture.ts`. That command establishes the current browser context and gives you the handle that the rest of the browser task depends on.
+
+Typical sequence:
+
+```bash
+npx tsx skill/scripts/capture.ts --tab-ref main
+npx tsx skill/scripts/query-snapshot.ts --tab-ref main --mode auto
+npx tsx skill/scripts/navigate.ts --tab-ref main --url https://example.com
+```
+
+Use `query-snapshot.ts --mode full` only when you explicitly need the full current snapshot, such as cold start inspection or debugging.
+
+## Command Reference
 
 The main command groups are:
 
@@ -73,20 +83,6 @@ The main command groups are:
   - `query-snapshot.ts --tab-ref <tabRef> --mode <search|auto|full> [--query <text>] [--role <role>] [--ref <ref>]`
   - `read-knowledge.ts --origin <origin> --normalized-path <path>`
   - `record-knowledge.ts --origin <origin> --normalized-path <path> --guide <text> [--keywords <comma-separated>]`
-
-In practice, `capture.ts` establishes or refreshes the current bound context, every mutation command refreshes browser state after acting, `query-snapshot.ts` is the detailed retrieval front door when compact guidance is not enough, and the knowledge commands are the durable interface for reusable page-level cues.
-
-## Detailed CLI Notes
-
-`capture.ts` is how you enter the skill. If you are unsure which page state the agent should trust, capture again and keep using the returned bound context.
-
-`navigate.ts`, `click.ts`, `type.ts`, `press.ts`, and `select-tab.ts` are the mutation surface. They all assume that the caller is staying inside one coherent browser task flow rather than firing disconnected browser commands.
-
-`query-snapshot.ts` is the detailed lookup tool. You give it the current browser context, a required mode, and then the selectors you care about. In other words, it is meant to retrieve a specific slice of the latest bound snapshot, not to become another excuse to dump whole page state into chat unless you deliberately use `--mode full`.
-
-`read-knowledge.ts` and `record-knowledge.ts` both work at the level of page identity, which means `origin + normalizedPath`. They are not generic file readers or append-only notes commands; they are the durable interface for reusable page cues.
-
-If you want a more explicit parameter-level reference, use this table:
 
 - `capture.ts`
   - required: `--tab-ref`
@@ -118,11 +114,14 @@ If you want a more explicit parameter-level reference, use this table:
   - optional: `--keywords`
   - purpose: save a durable reusable page cue
 
-## Recommended Flow
+## Invocation Notes
 
-The intended flow is to capture first, keep using the returned bound context for every mutation, and only go deeper into snapshot retrieval when the returned guidance is not enough to continue. The more you treat `query-snapshot.ts` as a precise retrieval tool instead of a generic “show me everything” tool, the more value you get from the skill’s token-efficiency model.
-
-When a page reveals something stable and obviously reusable, record it. When it does not, keep moving. The skill is designed so that browser work can still succeed even if nothing new gets written to durable knowledge.
+- Use one `--tab-ref` consistently for one browser task context.
+- Capture first if you are unsure what the current browser context is.
+- `query-snapshot.ts --mode search` should include at least one selector such as `--query`, `--role`, or `--ref`.
+- `query-snapshot.ts --mode auto` is the normal retrieval path.
+- `query-snapshot.ts --mode full` is the fallback path when targeted retrieval is not enough.
+- `read-knowledge.ts` and `record-knowledge.ts` work on `origin + normalizedPath`, not on arbitrary files.
 
 ## Notes For Agents
 
