@@ -53,7 +53,56 @@ function snapshotBodyLines(snapshotText: string): Array<{ lineNumber: number; ra
   return body;
 }
 
-function stripDecorators(line: string): { body: string; ref: string | null } | null {
+function parseElementBody(body: string): { role: string | null; text: string } | null {
+  const quotedMatch = body.match(
+    /^(?:(?<role>[A-Za-z][\w-]*)\s+)?(?:"(?<quoted>(?:\\.|[^"])*)")(?<suffix>.*)$/
+  );
+  if (quotedMatch?.groups) {
+    const role = quotedMatch.groups.role?.trim() || null;
+    const text = unescapeQuotedText(quotedMatch.groups.quoted ?? "");
+    return {
+      role,
+      text,
+    };
+  }
+
+  const match = body.match(/^(?:(?<role>[A-Za-z][\w-]*)\s+)?(?<bare>.+?)\s*$/);
+  if (!match?.groups) {
+    return null;
+  }
+
+  const role = match.groups.role?.trim() || null;
+  const bareText = match.groups.bare?.trim() ?? "";
+
+  return {
+    role,
+    text: bareText,
+  };
+}
+
+function parseQuotedElementLine(line: string, lineNumber: number, raw: string): ParsedSnapshotElement | null {
+  const content = line.trim().slice(2).trim().replace(/^<changed>\s*/i, "");
+  const match = content.match(
+    /^(?:(?<role>[A-Za-z][\w-]*)\s+)?(?:"(?<quoted>(?:\\.|[^"])*)")(?<suffix>.*)$/
+  );
+  if (!match?.groups) {
+    return null;
+  }
+
+  const role = match.groups.role?.trim() || null;
+  const text = unescapeQuotedText(match.groups.quoted ?? "");
+  const ref = match.groups.suffix?.match(/\[ref=([^\]\s]+)\]/i)?.[1]?.trim() || null;
+
+  return {
+    lineNumber,
+    raw,
+    role,
+    text,
+    ref,
+  };
+}
+
+function parseBareElementLine(line: string, lineNumber: number, raw: string): ParsedSnapshotElement | null {
   let content = line.trim();
   if (!content.startsWith("- ")) {
     return null;
@@ -70,49 +119,29 @@ function stripDecorators(line: string): { body: string; ref: string | null } | n
     .replace(/\s*:\s*$/, "")
     .trim();
 
-  return {
-    body,
-    ref,
-  };
-}
-
-function parseElementBody(body: string): { role: string | null; text: string } | null {
-  const match = body.match(/^(?:(?<role>[A-Za-z][\w-]*)\s+)?(?:"(?<quoted>(?:\\.|[^"])*)"|(?<bare>.+?))\s*$/);
-  if (!match?.groups) {
+  const parsed = parseElementBody(body);
+  if (!parsed) {
     return null;
   }
 
-  const role = match.groups.role?.trim() || null;
-  const quotedText = match.groups.quoted;
-  const bareText = match.groups.bare?.trim() ?? "";
-  const text = quotedText ? unescapeQuotedText(quotedText) : bareText;
-
   return {
-    role,
-    text,
+    lineNumber,
+    raw,
+    role: parsed.role,
+    text: parsed.text,
+    ref,
   };
 }
 
 export function parseSnapshotElements(snapshotText: string): ParsedSnapshotElement[] {
   return snapshotBodyLines(snapshotText)
     .map(({ lineNumber, raw }): ParsedSnapshotElement | null => {
-      const stripped = stripDecorators(raw);
-      if (!stripped) {
-        return null;
+      const parsedQuoted = parseQuotedElementLine(raw, lineNumber, raw);
+      if (parsedQuoted) {
+        return parsedQuoted;
       }
 
-      const parsed = parseElementBody(stripped.body);
-      if (!parsed) {
-        return null;
-      }
-
-      return {
-        lineNumber,
-        raw,
-        role: parsed.role,
-        text: parsed.text,
-        ref: stripped.ref,
-      };
+      return parseBareElementLine(raw, lineNumber, raw);
     })
     .filter((element): element is ParsedSnapshotElement => element !== null);
 }

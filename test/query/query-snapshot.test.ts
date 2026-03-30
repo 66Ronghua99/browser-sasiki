@@ -12,6 +12,7 @@ const snapshotText = [
   "### Snapshot",
   "```yaml",
   "- button \"Customer messages\" [ref=msg]",
+  "- button \"Invite [Beta]\" [active] [ref=invite] [cursor=pointer]:",
   "- tab \"未分配\" [active] [selected] [ref=e193] [cursor=pointer]:",
   "- text \"No chats yet\"",
   "```",
@@ -53,6 +54,20 @@ test("querySnapshotText search mode parses ref-bearing YAML lines with extra att
   assert.equal(result.matches[0].ref, "e193");
   assert.equal(result.matches[0].role, "tab");
   assert.equal(result.matches[0].text, "未分配");
+});
+
+test("querySnapshotText search mode preserves bracket text inside quoted labels", () => {
+  const result = querySnapshotText({
+    snapshotText,
+    mode: "search",
+    ref: "invite",
+  });
+
+  assert.equal(result.mode, "search");
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].ref, "invite");
+  assert.equal(result.matches[0].role, "button");
+  assert.equal(result.matches[0].text, "Invite [Beta]");
 });
 
 test("querySnapshotText auto mode falls back to full snapshot content without knowledge", () => {

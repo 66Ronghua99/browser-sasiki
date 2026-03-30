@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { readCliArgs } from "../lib/cli.js";
 import { defaultRuntimeRoots } from "../lib/paths.js";
-import { KnowledgeStore } from "../lib/knowledge-store.js";
+import { KnowledgeStore, type DurableKnowledgeRecord } from "../lib/knowledge-store.js";
 import { normalizePagePath } from "../lib/page-identity.js";
 
 function cliString(args: Record<string, string | boolean>, key: string): string | undefined {
@@ -16,11 +16,42 @@ function resolveStore(args: Record<string, string | boolean>): KnowledgeStore {
   return new KnowledgeStore(path.resolve(knowledgeFile));
 }
 
-export async function runReadKnowledgeCommand(args: Record<string, string | boolean>) {
+function cliMaybeKnowledgeId(args: Record<string, string | boolean>): string | undefined {
+  return cliString(args, "id") ?? cliString(args, "knowledge-id");
+}
+
+export type ReadKnowledgeResult =
+  | {
+      ok: true;
+      mode: "page";
+      page: {
+        origin: string;
+        normalizedPath: string;
+      };
+      knowledge: DurableKnowledgeRecord[];
+    }
+  | {
+      ok: true;
+      mode: "id";
+      knowledge: DurableKnowledgeRecord;
+    };
+
+export async function runReadKnowledgeCommand(args: Record<string, string | boolean>): Promise<ReadKnowledgeResult> {
+  const knowledgeId = cliMaybeKnowledgeId(args);
+  if (knowledgeId) {
+    const store = resolveStore(args);
+    const knowledge = await store.readById(knowledgeId);
+    return {
+      ok: true as const,
+      mode: "id",
+      knowledge,
+    };
+  }
+
   const origin = cliString(args, "origin");
   const normalizedPath = cliString(args, "path");
   if (!origin || !normalizedPath) {
-    throw new Error("read-knowledge requires --origin and --path");
+    throw new Error("read-knowledge requires --origin and --path or --id");
   }
 
   const store = resolveStore(args);
@@ -31,6 +62,7 @@ export async function runReadKnowledgeCommand(args: Record<string, string | bool
 
   return {
     ok: true as const,
+    mode: "page",
     page: {
       origin,
       normalizedPath: normalizePagePath(normalizedPath),

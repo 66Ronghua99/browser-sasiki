@@ -84,6 +84,7 @@ export class KnowledgeStore {
 
   async append(record: DurableKnowledgeRecord): Promise<void> {
     assertKnowledgeRecord(record);
+    record.page.normalizedPath = normalizePagePath(record.page.normalizedPath);
     await mkdir(path.dirname(this.filePath), { recursive: true });
     await appendFile(this.filePath, `${JSON.stringify(record)}\n`, "utf8");
   }
@@ -107,5 +108,19 @@ export class KnowledgeStore {
         record.page.origin === page.origin &&
         record.page.normalizedPath === normalizePagePath(page.normalizedPath)
     );
+  }
+
+  async readById(id: string): Promise<DurableKnowledgeRecord> {
+    if (typeof id !== "string" || id.length === 0) {
+      throw new TypeError("knowledge id must be a non-empty string");
+    }
+
+    const allRecords = await this.readAll();
+    const record = allRecords.find((item) => item.id === id);
+    if (!record) {
+      throw new Error(`Knowledge record not found for id ${id}`);
+    }
+
+    return record;
   }
 }
