@@ -15,11 +15,11 @@ Begin with `capture.ts`.
 
 If you do not have a `tabRef`, do not guess one and do not proceed with mutation scripts.
 
-## Default Query Path
+## Default Check Path
 
-Use `query-snapshot.ts` as the normal inspection entrypoint.
+Check returned `knowledgeHits` first after capture or any mutation.
 
-- Prefer it when you need to locate elements or understand the current page structure.
+- Use `query-snapshot.ts` only when those hits are not enough and you still need a fresh `ref` or deeper structural lookup.
 - Use `read-knowledge.ts` only when you need durable page knowledge for a known page identity.
 - Use `record-knowledge.ts` only when the current task reveals a reusable cue that is worth keeping.
 
@@ -28,9 +28,21 @@ Do not treat knowledge recording as required for task completion. Browser work s
 ## Command Order
 
 1. `capture.ts` to establish or refresh the tab binding.
-2. `navigate.ts`, `click.ts`, `type.ts`, `press.ts`, or `select-tab.ts` to perform the task.
-3. `query-snapshot.ts` to inspect the latest snapshot when the next target is unclear.
+2. `navigate.ts`, `click.ts`, `type.ts`, `press.ts`, or `select-tab.ts` to perform the task. These commands auto-capture and refresh the bound snapshot after each action.
+3. Inspect `knowledgeHits` first; use `query-snapshot.ts` only if the hits are not enough and you still need a fresh `ref`.
 4. `record-knowledge.ts` only if a durable page cue emerged.
+
+## Invocation Shapes
+
+- `capture.ts --tab-ref <existing|new>`
+- `navigate.ts --tab-ref <tabRef> --url <absolute-url>`
+- `click.ts --tab-ref <tabRef> --ref <element-ref>`
+- `type.ts --tab-ref <tabRef> --ref <element-ref> --text <value>`
+- `press.ts --tab-ref <tabRef> --key <key-name>`
+- `select-tab.ts --tab-ref <tabRef> --index <tab-index>`
+- `query-snapshot.ts --tab-ref <tabRef> --mode <search|auto|full> [--query <text|ref|role>]`
+- `read-knowledge.ts --origin <origin> --normalized-path <path>`
+- `record-knowledge.ts --origin <origin> --normalized-path <path> --guide <text> [--keywords <comma-separated>]`
 
 ## Storage Rules
 
