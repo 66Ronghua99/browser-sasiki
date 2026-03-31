@@ -25,11 +25,16 @@ Default capture behavior is now workspace-oriented:
 
 If capture fails because Chrome is not attachable, open `chrome://inspect/#remote-debugging` in Chrome, turn remote debugging on, allow the MCP connection if prompted, and then retry capture.
 
-## Work Model
+## Recommended Flow
 
-Establish context first. Then keep doing the browser work through this skill instead of mixing in unrelated browser calls. In this phase the skill attaches to an already running Chrome session through Chrome DevTools MCP auto-connect, and the first command starts `browser-sessiond` as the single runtime owner for MCP attach, snapshot capture, snapshot querying, and knowledge IO. The CLI scripts are thin RPC entrypoints into that daemon; they do not each own their own browser session. Chrome DevTools MCP snapshots are accessibility-tree text headed by `## Latest page snapshot`, and element handles in that snapshot are `uid` values. When the built-in guidance is enough, continue. When it is not enough, query the latest snapshot more precisely. If the run exposes something stable and useful for the same page identity, record it. Knowledge is a byproduct of successful browser work, not the main goal.
+Treat this skill as browser automation first.
 
-The daemon is persistent but not immortal. Normal CLI calls reuse one healthy `browser-sessiond`, and a rebuilt or updated install should replace the old daemon automatically on the next request. A `tabRef` still points at one bound workspace tab, so if that tab is manually closed later, the binding can become stale and should be re-established with `capture` or `select-tab`.
+1. Start with `capture.js` to establish or refresh a workspace.
+2. Use `navigate.js`, `click.js`, `type.js`, `press.js`, and `select-tab.js` to do the actual browser work.
+3. Use `query-snapshot.js` only when you need extra page inspection to decide what to do next.
+4. Use knowledge commands only when the current run uncovers something stable that should help a later run on the same page.
+
+The agent does not need to reason about runtime ownership, sockets, or daemon internals here. The front door is the CLI command set.
 
 ## Command Surface
 
@@ -54,6 +59,20 @@ Use the README as the denser operator-facing reference for installation and exac
 - `uid`: the Chrome DevTools accessibility-tree element handle from the latest snapshot. This is the canonical element selector.
 - `page-id`: the Chrome DevTools page handle used by `list_pages` / `select_page`.
 - `tab-index`: capture-only explicit override for binding an already open tab instead of creating a new workspace tab.
+
+### `tabRef` Rules
+
+- `tabRef` is a skill-owned workspace name, not a Chrome-provided page id.
+- Prefer passing a stable `--tab-ref` such as `work`, `checkout`, or `baidu-fashion` so later commands can reuse the same workspace.
+- If `capture` is called without `--tab-ref`, the skill mints one locally and returns it in the capture result.
+- The `tabs` array returned by `capture` is the Chrome page inventory, not a list of `tabRef` values.
+
+### Knowledge Rules
+
+- `read-knowledge.js` is for reuse. Use it when you want durable page guidance for a known page or workspace before acting.
+- `record-knowledge.js` is for successful discoveries. Use it only after you have learned something stable and reusable, not for temporary observations.
+- `query-snapshot.js` is not durable knowledge. It is for inspecting the current page state.
+- Do not start with knowledge commands unless the task already depends on previously learned page guidance.
 
 ### Command Details
 
@@ -87,13 +106,16 @@ Use the README as the denser operator-facing reference for installation and exac
   - only `full` results, or `auto` when it truly falls back to full, should include `snapshotText`
   - `snapshotPath` is no longer part of the query front door or normal CLI output
   - `--knowledge-file` is no longer accepted on the daemon-backed path
+  - use it when you need to inspect the current page more precisely before the next action
 - `read-knowledge.js`
   - daemon path: use `--tab-ref`, `--snapshot-ref`, `--knowledge-ref`, or `--origin` + `--normalized-path`
   - standalone compatibility path: `--knowledge-file` only when you are intentionally bypassing runtime state
+  - use it when the task may benefit from previously recorded page-specific guidance
 - `record-knowledge.js`
   - required: `--origin`, `--normalized-path`, `--guide`, `--keywords`
   - optional runtime hints: `--tab-ref`, `--snapshot-ref`, `--knowledge-ref`, `--rationale`
   - standalone compatibility path: `--knowledge-file` only when there is no `tabRef` or `snapshotRef`
+  - use it after a run reveals a stable reusable cue such as a hidden control location, a naming quirk, or a reliable workflow hint
 
 For snapshot retrieval, treat `query-snapshot.js` as the single local front door and prefer `--uid` selectors from the latest snapshot. `click.js`, `type.js`, and `query-snapshot.js` still accept legacy `--ref` during migration, and `select-tab.js` still accepts legacy `--index`, but the canonical names are `--uid` and `--page-id`.
 
