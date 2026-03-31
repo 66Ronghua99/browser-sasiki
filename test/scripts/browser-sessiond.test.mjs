@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { assertSessionMetadata } from "../../runtime/session-metadata.js";
-import { requestJson, startBrowserSessionDaemon } from "../../server/http-client.mjs";
+import { assertSessionMetadata } from "../../scripts/session-metadata.mjs";
+import { requestJson, startBrowserSessionDaemon } from "../../scripts/http-client.mjs";
 
 test("browser-sessiond publishes HTTP metadata and health without socket fields", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));

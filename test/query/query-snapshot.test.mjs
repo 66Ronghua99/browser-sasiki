@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { querySnapshotText } from "../../lib/knowledge-query.mjs";
-
-type SnapshotQuerySearchResult = Extract<ReturnType<typeof querySnapshotText>, { mode: "search" }>;
+import { querySnapshotText } from "../../scripts/knowledge-query.mjs";
 
 const snapshotText = [
   "## Latest page snapshot",
@@ -20,7 +18,7 @@ const waitForSnapshotText = [
   snapshotText,
 ].join("\n");
 
-function assertSearchResult(result: ReturnType<typeof querySnapshotText>): asserts result is SnapshotQuerySearchResult {
+function assertSearchResult(result) {
   assert.equal(result.mode, "search");
 }
 

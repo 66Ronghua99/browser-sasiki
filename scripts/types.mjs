@@ -62,10 +62,10 @@ function assertBaseResult(result) {
   }
   assertString(result.tabRef, "tabRef");
   assertPageIdentity(result.page);
-  if (result.snapshotRef !== undefined) {
-    assertString(result.snapshotRef, "snapshotRef");
+  if ("snapshotPath" in result) {
+    throw new TypeError("snapshotPath is not allowed");
   }
-  assertString(result.snapshotPath, "snapshotPath");
+  assertString(result.snapshotRef, "snapshotRef");
   if (result.knowledgeRef !== undefined) {
     assertString(result.knowledgeRef, "knowledgeRef");
   }

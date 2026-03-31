@@ -4,24 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { runCaptureFlow } from "../../lib/browser-action.mjs";
-import { KnowledgeStore } from "../../lib/knowledge-store.mjs";
-import { SnapshotStore } from "../../lib/snapshot-store.mjs";
-import { TabBindingStore } from "../../lib/tab-binding-store.mjs";
-
-interface BrowserRuntime {
-  captureSnapshot(): Promise<string>;
-  callBrowserTool(name: string, args: Record<string, unknown>): Promise<unknown>;
-  readActiveTabIndex(): Promise<number>;
-  openWorkspaceTab(): Promise<{
-    pageId: number;
-    pageListText: string;
-  }>;
-}
+import { runCaptureFlow } from "../../scripts/browser-action.mjs";
+import { KnowledgeStore } from "../../scripts/knowledge-store.mjs";
+import { SnapshotStore } from "../../scripts/snapshot-store.mjs";
+import { TabBindingStore } from "../../scripts/tab-binding-store.mjs";
 
 test("runCaptureFlow reuses the selected new_page result for a fresh workspace tab instead of re-selecting it", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-capture-flow-"));
-  const browserCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const browserCalls = [];
   const newPageListText = [
     "## Pages",
     "- 1 [Home](https://example.com/home)",
@@ -37,7 +27,7 @@ test("runCaptureFlow reuses the selected new_page result for a fresh workspace t
     async captureSnapshot() {
       return rawSnapshotText;
     },
-    async callBrowserTool(name: string, args: Record<string, unknown>) {
+    async callBrowserTool(name, args) {
       browserCalls.push({ name, args });
       return {
         isError: true,
@@ -53,7 +43,7 @@ test("runCaptureFlow reuses the selected new_page result for a fresh workspace t
         pageListText: newPageListText,
       };
     },
-  } as unknown as BrowserRuntime;
+  };
 
   const result = await runCaptureFlow(
     { tabRef: "x-work" },

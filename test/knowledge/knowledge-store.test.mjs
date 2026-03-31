@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { KnowledgeStore } from "../../lib/knowledge-store.mjs";
+import { KnowledgeStore } from "../../scripts/knowledge-store.mjs";
 
 test("KnowledgeStore appends page knowledge and reads it back by exact page", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-knowledge-"));

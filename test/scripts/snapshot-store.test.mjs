@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { SnapshotStore } from "../../lib/snapshot-store.mjs";
+import { SnapshotStore } from "../../scripts/snapshot-store.mjs";
 
 test("snapshot store writes files and deletes expired files", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-snapshots-"));

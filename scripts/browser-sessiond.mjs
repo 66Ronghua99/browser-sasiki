@@ -12,14 +12,14 @@ import {
   resolveBrowserMcpLaunchOptions,
   runBrowserAction,
   runCaptureFlow,
-} from "../lib/browser-action.mjs";
-import { querySnapshotText } from "../lib/knowledge-query.mjs";
-import { KnowledgeStore } from "../lib/knowledge-store.mjs";
-import { createConnectedMcpBrowserClient } from "../lib/mcp-browser-client.mjs";
-import { defaultRuntimeRoots } from "../lib/paths.mjs";
-import { pageIdentityFromSnapshotText } from "../lib/page-identity.mjs";
-import { SnapshotStore } from "../lib/snapshot-store.mjs";
-import { TabBindingStore } from "../lib/tab-binding-store.mjs";
+} from "./browser-action.mjs";
+import { querySnapshotText } from "./knowledge-query.mjs";
+import { KnowledgeStore } from "./knowledge-store.mjs";
+import { createConnectedMcpBrowserClient } from "./mcp-browser-client.mjs";
+import { defaultRuntimeRoots } from "./paths.mjs";
+import { pageIdentityFromSnapshotText } from "./page-identity.mjs";
+import { SnapshotStore } from "./snapshot-store.mjs";
+import { TabBindingStore } from "./tab-binding-store.mjs";
 
 import { HttpError } from "./http-contract.mjs";
 import { createHttpRouteHandler } from "./http-routes.mjs";

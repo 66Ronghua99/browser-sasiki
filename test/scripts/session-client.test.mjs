@@ -10,16 +10,16 @@ import {
   assertSessionRpcRequest,
   SESSION_RPC_REQUEST_FIELDS,
   SESSION_RPC_METHODS,
-} from "../../runtime/session-rpc-types.js";
+} from "../../scripts/session-contract.mjs";
 import {
   assertSessionMetadata,
   SESSION_METADATA_KEYS,
-} from "../../runtime/session-metadata.js";
-import { ensureSessionDaemon, sendSessionRpcRequest, type SessionClientOptions } from "../../runtime/session-client.js";
-import { startBrowserSessionDaemon } from "../../server/http-client.mjs";
+} from "../../scripts/session-metadata.mjs";
+import { ensureSessionDaemon, sendSessionRpcRequest } from "../../scripts/session-client.mjs";
+import { startBrowserSessionDaemon } from "../../scripts/http-client.mjs";
 
 const sessionResult = {
-  ok: true as const,
+  ok: true,
   tabRef: "tab_demo",
   snapshotRef: "snapshot_demo",
   page: {
@@ -48,7 +48,7 @@ const sessionMetadata = {
   port: 9222,
   baseUrl: "http://127.0.0.1:9222",
   browserUrl: "http://127.0.0.1:9222",
-  connectionMode: "http" as const,
+  connectionMode: "http",
   startedAt: "2026-03-30T12:00:00.000Z",
   lastSeenAt: "2026-03-30T12:01:00.000Z",
   runtimeVersion: "0.1.0",
@@ -56,7 +56,7 @@ const sessionMetadata = {
 
 const navigateRequest = {
   requestId: "req_1",
-  method: "navigate" as const,
+  method: "navigate",
   params: {
     tabRef: "tab_demo",
     url: "https://example.com/dashboard",
@@ -65,7 +65,7 @@ const navigateRequest = {
 
 const captureRequest = {
   requestId: "req_2",
-  method: "capture" as const,
+  method: "capture",
   params: {
     tabRef: "tab_demo",
   },
@@ -73,7 +73,7 @@ const captureRequest = {
 
 const captureByIndexRequest = {
   requestId: "req_2b",
-  method: "capture" as const,
+  method: "capture",
   params: {
     pageId: 2,
   },
@@ -81,22 +81,22 @@ const captureByIndexRequest = {
 
 const captureEmptyRequest = {
   requestId: "req_2c",
-  method: "capture" as const,
+  method: "capture",
   params: {},
 };
 
 const querySnapshotRequest = {
   requestId: "req_3",
-  method: "querySnapshot" as const,
+  method: "querySnapshot",
   params: {
     snapshotRef: "snapshot_demo",
-    mode: "auto" as const,
+    mode: "auto",
   },
 };
 
 const recordKnowledgeRequest = {
   requestId: "req_4",
-  method: "recordKnowledge" as const,
+  method: "recordKnowledge",
   params: {
     page: {
       origin: "https://example.com",
@@ -110,7 +110,7 @@ const recordKnowledgeRequest = {
 
 const recordKnowledgeByTabRefRequest = {
   requestId: "req_4b",
-  method: "recordKnowledge" as const,
+  method: "recordKnowledge",
   params: {
     tabRef: "tab_demo",
     guide: "use dashboard",
@@ -120,7 +120,7 @@ const recordKnowledgeByTabRefRequest = {
 
 const recordKnowledgeBySnapshotRefRequest = {
   requestId: "req_4c",
-  method: "recordKnowledge" as const,
+  method: "recordKnowledge",
   params: {
     snapshotRef: "snapshot_demo",
     guide: "use dashboard",
@@ -208,7 +208,7 @@ test("session rpc requests and results keep the HTTP contract explicit", () => {
     () =>
       assertSessionRpcRequest({
         requestId: "req_legacy",
-        method: "readKnowledge" as never,
+        method: "readKnowledge",
         params: {},
       }),
     /supported session rpc method/,
@@ -256,7 +256,7 @@ test("session rpc requests and results keep the HTTP contract explicit", () => {
       assertSessionRpcResult({
         ...sessionResult,
         snapshotPath: "/tmp/legacy.md",
-      } as never),
+      }),
     /snapshotPath/,
   );
   assert.throws(
@@ -285,7 +285,7 @@ test("session rpc requests and results keep the HTTP contract explicit", () => {
       assertSessionMetadata({
         ...sessionMetadata,
         socketPath: "/tmp/legacy.sock",
-      } as never),
+      }),
     /socketPath/,
   );
   assert.throws(
@@ -396,19 +396,14 @@ test("session client exposes a narrow HTTP request API for other lanes", async (
   }
 });
 
-async function createSessionClientHarness(): Promise<{
-  options: SessionClientOptions;
-  sessionRoot: string;
-  launchCount(): number;
-  cleanup(): Promise<void>;
-}> {
+async function createSessionClientHarness() {
   const root = await mkdtemp(path.join("/tmp", "browser-session-client-"));
   const sessionRoot = path.join(root, "session");
   await mkdir(sessionRoot, { recursive: true });
   let launches = 0;
-  let daemon: Awaited<ReturnType<typeof startBrowserSessionDaemon>> | null = null;
+  let daemon = null;
 
-  const options: SessionClientOptions = {
+  const options = {
     env: {},
     sessionRoot,
     runtimeVersion: "0.1.0-test",

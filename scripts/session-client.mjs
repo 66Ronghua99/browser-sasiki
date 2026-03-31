@@ -6,57 +6,20 @@ import process from "node:process";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { requestJson } from "../server/http-client.mjs";
-import { assertSessionMetadata, type SessionMetadata } from "./session-metadata.js";
+import { requestJson } from "./http-client.mjs";
+import { assertSessionMetadata } from "./session-metadata.mjs";
 import {
   assertSessionCaptureResult,
   assertSessionRpcRequest,
   assertSessionRpcResult,
-  type SessionCaptureResult,
-  type SessionRpcMethod,
-  type SessionRpcRequestEnvelope,
-  type SessionRpcRequestMap,
-  type SessionRpcResultBase,
-} from "./session-rpc-types.js";
+} from "./session-contract.mjs";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 5_000;
 const DEFAULT_RUNTIME_VERSION = "0.1.0";
-const injectedSessionCache = new Map<string, SessionMetadata>();
+const injectedSessionCache = new Map();
 
-interface SessionPaths {
-  sessionRoot: string;
-  metadataPath: string;
-}
-
-export interface SessionClientOptions {
-  env?: Record<string, string | undefined>;
-  sessionRoot?: string;
-  runtimeVersion?: string;
-  startupTimeoutMs?: number;
-  launchDaemon?: (options: SessionDaemonLaunchOptions) => Promise<void>;
-}
-
-export interface SessionDaemonLaunchOptions {
-  env?: Record<string, string | undefined>;
-  sessionRoot?: string;
-  runtimeVersion?: string;
-}
-
-interface SessionRpcResponseMap {
-  health: SessionMetadata;
-  capture: SessionCaptureResult;
-  navigate: SessionRpcResultBase;
-  click: SessionRpcResultBase;
-  type: SessionRpcResultBase;
-  press: SessionRpcResultBase;
-  selectTab: SessionRpcResultBase;
-  querySnapshot: SessionRpcResultBase;
-  recordKnowledge: SessionRpcResultBase;
-  shutdown: { ok: true };
-}
-
-export async function ensureSessionDaemon(options: SessionClientOptions = {}): Promise<SessionMetadata> {
-  const env = options.env ?? (process.env as Record<string, string | undefined>);
+export async function ensureSessionDaemon(options = {}) {
+  const env = options.env ?? process.env;
   const paths = resolveSessionPaths(options.sessionRoot);
   const runtimeVersion = await resolveRequestedRuntimeVersion(options);
 
@@ -139,35 +102,19 @@ export async function ensureSessionDaemon(options: SessionClientOptions = {}): P
   throw new Error("Timed out waiting for browser-sessiond to become healthy");
 }
 
-export async function sendSessionRpcRequest<M extends SessionRpcMethod>(
-  request: SessionRpcRequestEnvelope<M>,
-  options?: SessionClientOptions,
-): Promise<SessionRpcResponseMap[M]>;
-export async function sendSessionRpcRequest<M extends SessionRpcMethod>(
-  method: M,
-  params: SessionRpcRequestMap[M],
-  options?: SessionClientOptions,
-): Promise<SessionRpcResponseMap[M]>;
-export async function sendSessionRpcRequest<M extends SessionRpcMethod>(
-  requestOrMethod: SessionRpcRequestEnvelope<M> | M,
-  paramsOrOptions?: SessionRpcRequestMap[M] | SessionClientOptions,
-  maybeOptions?: SessionClientOptions,
-): Promise<SessionRpcResponseMap[M]> {
+export async function sendSessionRpcRequest(requestOrMethod, paramsOrOptions, maybeOptions) {
   const envelope = normalizeRequest(requestOrMethod, paramsOrOptions);
   const options = isEnvelope(requestOrMethod)
-    ? (paramsOrOptions as SessionClientOptions | undefined)
+    ? paramsOrOptions
     : maybeOptions;
   assertSessionRpcRequest(envelope);
 
   const metadata = await ensureSessionDaemon(options);
   const result = await sendHttpSessionRequest(metadata.baseUrl, envelope);
-  return validateSessionResult(envelope.method, result) as SessionRpcResponseMap[M];
+  return validateSessionResult(envelope.method, result);
 }
 
-function normalizeRequest<M extends SessionRpcMethod>(
-  requestOrMethod: SessionRpcRequestEnvelope<M> | M,
-  paramsOrOptions?: SessionRpcRequestMap[M] | SessionClientOptions,
-): SessionRpcRequestEnvelope<M> {
+function normalizeRequest(requestOrMethod, paramsOrOptions) {
   if (isEnvelope(requestOrMethod)) {
     return requestOrMethod;
   }
@@ -175,20 +122,15 @@ function normalizeRequest<M extends SessionRpcMethod>(
   return {
     requestId: randomUUID(),
     method: requestOrMethod,
-    params: (paramsOrOptions ?? {}) as SessionRpcRequestMap[M],
+    params: paramsOrOptions ?? {},
   };
 }
 
-function isEnvelope<M extends SessionRpcMethod>(
-  value: SessionRpcRequestEnvelope<M> | M,
-): value is SessionRpcRequestEnvelope<M> {
+function isEnvelope(value) {
   return typeof value === "object" && value !== null && "method" in value;
 }
 
-async function sendHttpSessionRequest<M extends SessionRpcMethod>(
-  baseUrl: string,
-  request: SessionRpcRequestEnvelope<M>,
-): Promise<unknown> {
+async function sendHttpSessionRequest(baseUrl, request) {
   const endpoint = request.method === "selectTab"
     ? "/select-tab"
     : request.method === "querySnapshot"
@@ -208,7 +150,7 @@ async function sendHttpSessionRequest<M extends SessionRpcMethod>(
   );
 }
 
-function validateSessionResult(method: SessionRpcMethod, result: unknown): unknown {
+function validateSessionResult(method, result) {
   switch (method) {
     case "health":
       assertSessionMetadata(result);
@@ -227,10 +169,12 @@ function validateSessionResult(method: SessionRpcMethod, result: unknown): unkno
       return result;
     case "shutdown":
       return result;
+    default:
+      return result;
   }
 }
 
-async function defaultLaunchDaemon(options: SessionDaemonLaunchOptions): Promise<void> {
+async function defaultLaunchDaemon(options) {
   const daemonEntry = resolveDaemonEntry();
   const args = [
     ...daemonEntry.args,
@@ -243,16 +187,16 @@ async function defaultLaunchDaemon(options: SessionDaemonLaunchOptions): Promise
   const child = spawn(daemonEntry.command, args, {
     detached: true,
     stdio: "ignore",
-    env: sanitizeEnv(options.env ?? (process.env as Record<string, string | undefined>)),
+    env: sanitizeEnv(options.env ?? process.env),
   });
   child.unref();
 }
 
-function resolveDaemonEntry(): { command: string; args: string[]; entryPath: string } {
+function resolveDaemonEntry() {
   const thisFile = fileURLToPath(import.meta.url);
   const runtimeDir = path.dirname(thisFile);
   const packageRoot = path.resolve(runtimeDir, "..");
-  const entryPath = path.join(packageRoot, "server", "browser-sessiond.mjs");
+  const entryPath = path.join(packageRoot, "scripts", "browser-sessiond.mjs");
 
   return {
     command: process.execPath,
@@ -261,7 +205,7 @@ function resolveDaemonEntry(): { command: string; args: string[]; entryPath: str
   };
 }
 
-function resolveSessionPaths(sessionRootOverride?: string): SessionPaths {
+function resolveSessionPaths(sessionRootOverride) {
   const sessionRoot = sessionRootOverride ?? resolveDefaultSessionRoot();
   return {
     sessionRoot,
@@ -269,13 +213,13 @@ function resolveSessionPaths(sessionRootOverride?: string): SessionPaths {
   };
 }
 
-function resolveDefaultSessionRoot(): string {
+function resolveDefaultSessionRoot() {
   return path.join(os.homedir(), ".sasiki", "browser-skill", "http-session");
 }
 
-async function readSessionMetadata(metadataPath: string): Promise<SessionMetadata | null> {
+async function readSessionMetadata(metadataPath) {
   try {
-    const raw = JSON.parse(await readFile(metadataPath, "utf8")) as unknown;
+    const raw = JSON.parse(await readFile(metadataPath, "utf8"));
     assertSessionMetadata(raw);
     return raw;
   } catch (error) {
@@ -286,7 +230,7 @@ async function readSessionMetadata(metadataPath: string): Promise<SessionMetadat
   }
 }
 
-async function tryHealthcheck(baseUrl: string): Promise<SessionMetadata | null> {
+async function tryHealthcheck(baseUrl) {
   try {
     const result = await requestJson("GET", new URL("/health", baseUrl).href);
     assertSessionMetadata(result);
@@ -296,11 +240,11 @@ async function tryHealthcheck(baseUrl: string): Promise<SessionMetadata | null> 
   }
 }
 
-async function cleanupStaleSession(paths: SessionPaths): Promise<void> {
+async function cleanupStaleSession(paths) {
   await rm(paths.metadataPath, { force: true }).catch(() => {});
 }
 
-async function requestShutdown(baseUrl: string): Promise<void> {
+async function requestShutdown(baseUrl) {
   try {
     await requestJson("POST", new URL("/shutdown", baseUrl).href, {});
   } catch {
@@ -308,7 +252,7 @@ async function requestShutdown(baseUrl: string): Promise<void> {
   }
 }
 
-async function resolveRequestedRuntimeVersion(options: SessionClientOptions): Promise<string> {
+async function resolveRequestedRuntimeVersion(options) {
   if (options.runtimeVersion) {
     return options.runtimeVersion;
   }
@@ -322,8 +266,8 @@ async function resolveRequestedRuntimeVersion(options: SessionClientOptions): Pr
   }
 }
 
-function sanitizeEnv(env: Record<string, string | undefined>): Record<string, string> {
-  const clean: Record<string, string> = {};
+function sanitizeEnv(env) {
+  const clean = {};
   for (const [key, value] of Object.entries(env)) {
     if (typeof value === "string") {
       clean[key] = value;
@@ -332,11 +276,11 @@ function sanitizeEnv(env: Record<string, string | undefined>): Record<string, st
   return clean;
 }
 
-function isMissingFileError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT";
+function isMissingFileError(error) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
-function isProcessAlive(pid: number): boolean {
+function isProcessAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
@@ -345,6 +289,6 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-async function sleep(ms: number): Promise<void> {
+async function sleep(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }

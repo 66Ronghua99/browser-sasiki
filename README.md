@@ -17,7 +17,7 @@ Browser Skill is a browser automation skill for coding agents. Its front door is
 Start the daemon:
 
 ```bash
-node skill/server/browser-sessiond.mjs
+node skill/scripts/browser-sessiond.mjs
 ```
 
 Check health:
@@ -94,6 +94,5 @@ curl -s -X POST http://127.0.0.1:3456/navigate \
 Current migration-period checks:
 
 ```bash
-node --test skill/test/http/*.test.mjs
-npx tsx --test skill/test/contracts/skill-contracts.test.ts
+npm --prefix skill test
 ```

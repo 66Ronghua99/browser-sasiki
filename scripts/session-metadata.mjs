@@ -7,36 +7,9 @@ export const SESSION_METADATA_KEYS = [
   "startedAt",
   "lastSeenAt",
   "runtimeVersion",
-] as const;
+];
 
-export type SessionMetadataKey = (typeof SESSION_METADATA_KEYS)[number];
-
-export type SessionConnectionMode = "http" | "browserUrl" | "autoConnect" | null;
-
-export interface SessionMetadata {
-  pid: number;
-  port: number;
-  baseUrl: string;
-  browserUrl: string | null;
-  connectionMode: SessionConnectionMode;
-  startedAt: string;
-  lastSeenAt: string;
-  runtimeVersion: string;
-}
-
-function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TypeError(`${label} must be an object`);
-  }
-}
-
-function assertString(value: unknown, label: string): asserts value is string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new TypeError(`${label} must be a non-empty string`);
-  }
-}
-
-export function assertSessionMetadata(value: unknown): asserts value is SessionMetadata {
+export function assertSessionMetadata(value) {
   assertRecord(value, "session metadata");
 
   if (typeof value.pid !== "number" || !Number.isInteger(value.pid) || value.pid <= 0) {
@@ -66,4 +39,16 @@ export function assertSessionMetadata(value: unknown): asserts value is SessionM
   assertString(value.startedAt, "startedAt");
   assertString(value.lastSeenAt, "lastSeenAt");
   assertString(value.runtimeVersion, "runtimeVersion");
+}
+
+function assertRecord(value, label) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+}
+
+function assertString(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError(`${label} must be a non-empty string`);
+  }
 }

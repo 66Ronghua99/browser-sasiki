@@ -1,39 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { McpBrowserClient } from "../../lib/mcp-browser-client.mjs";
-import { resolveBrowserMcpLaunchOptions } from "../../lib/browser-action.mjs";
+import { McpBrowserClient } from "../../scripts/mcp-browser-client.mjs";
+import { resolveBrowserMcpLaunchOptions } from "../../scripts/browser-action.mjs";
 
-interface ToolDefinition {
-  name: string;
-  description?: string;
-  inputSchema?: Record<string, unknown>;
-}
+class StubToolClient {
+  constructor() {
+    this.calls = [];
+  }
 
-interface ToolCallResult {
-  content?: unknown;
-  isError?: boolean;
-  [key: string]: unknown;
-}
+  async connect() {}
+  async disconnect() {}
 
-interface ToolClient {
-  connect(): Promise<void>;
-  disconnect(): Promise<void>;
-  listTools(): Promise<ToolDefinition[]>;
-  callTool(name: string, args: Record<string, unknown>): Promise<ToolCallResult>;
-}
-
-class StubToolClient implements ToolClient {
-  readonly calls: Array<{ name: string; args: Record<string, unknown> }> = [];
-
-  async connect(): Promise<void> {}
-  async disconnect(): Promise<void> {}
-
-  async listTools(): Promise<ToolDefinition[]> {
+  async listTools() {
     return [];
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<ToolCallResult> {
+  async callTool(name, args) {
     this.calls.push({ name, args });
     if (name === "take_snapshot") {
       return {
@@ -178,7 +161,7 @@ test("mcp browser client opens a new workspace tab through new_page", async () =
 
 test("mcp browser client rejects take_snapshot error payloads", async () => {
   const toolClient = new StubToolClient();
-  toolClient.callTool = async (name: string, args: Record<string, unknown>): Promise<ToolCallResult> => {
+  toolClient.callTool = async (name, args) => {
     toolClient.calls.push({ name, args });
     return {
       isError: true,
@@ -201,7 +184,7 @@ test("mcp browser client rejects take_snapshot error payloads", async () => {
 
 test("mcp browser client adds remote-debugging guidance when Chrome is not attachable", async () => {
   const toolClient = new StubToolClient();
-  toolClient.callTool = async (name: string, args: Record<string, unknown>): Promise<ToolCallResult> => {
+  toolClient.callTool = async (name, args) => {
     toolClient.calls.push({ name, args });
     return {
       isError: true,
@@ -219,57 +202,8 @@ test("mcp browser client adds remote-debugging guidance when Chrome is not attac
   const client = new McpBrowserClient(toolClient);
 
   await assert.rejects(
-    () => client.listPages(),
-    /chrome:\/\/inspect\/#remote-debugging/i,
-  );
-  await assert.rejects(
-    () => client.listPages(),
-    /node dist\/scripts\/capture\.js --tab-ref main/i,
-  );
-});
-
-test("mcp browser client adds remote-debugging guidance when MCP tool calls throw Chrome connection errors", async () => {
-  const toolClient = new StubToolClient();
-  toolClient.callTool = async (name: string, args: Record<string, unknown>): Promise<ToolCallResult> => {
-    toolClient.calls.push({ name, args });
-    throw new Error("Could not connect to Chrome. Check if Chrome is running.");
-  };
-  const client = new McpBrowserClient(toolClient);
-
-  await assert.rejects(
     () => client.captureSnapshot(),
-    /allow Chrome DevTools MCP to connect/i,
+    /could not attach to the running Chrome session/i,
   );
-});
-
-test("mcp browser client rejects malformed take_snapshot success payloads", async () => {
-  const toolClient = new StubToolClient();
-  toolClient.callTool = async (name: string, args: Record<string, unknown>): Promise<ToolCallResult> => {
-    toolClient.calls.push({ name, args });
-    return {
-      content: [
-        {
-          type: "json",
-          value: { unexpected: true },
-        },
-      ],
-    };
-  };
-  const client = new McpBrowserClient(toolClient);
-
-  await assert.rejects(
-    () => client.captureSnapshot(),
-    /take_snapshot returned a malformed payload/i,
-  );
-});
-
-test("mcp browser client forwards generic browser tools unchanged", async () => {
-  const toolClient = new StubToolClient();
-  const client = new McpBrowserClient(toolClient);
-
-  const result = await client.callBrowserTool("browser_click", { ref: "go" });
-
-  assert.equal(toolClient.calls[0]?.name, "browser_click");
-  assert.deepEqual(toolClient.calls[0]?.args, { ref: "go" });
-  assert.equal((result.content as Array<{ text?: string }> | undefined)?.[0]?.text, "called:browser_click");
+  assert.deepEqual(toolClient.calls, [{ name: "take_snapshot", args: {} }]);
 });

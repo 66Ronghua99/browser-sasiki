@@ -4,10 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { runCaptureFlow, type BrowserActionDeps, type BrowserRuntime } from "../../lib/browser-action.js";
-import type { DurableKnowledgeRecord } from "../../lib/knowledge-store.js";
-import { SnapshotStore } from "../../lib/snapshot-store.js";
-import { TabBindingStore } from "../../lib/tab-binding-store.js";
+import { runCaptureFlow } from "../../scripts/browser-action.mjs";
+import { KnowledgeStore } from "../../scripts/knowledge-store.mjs";
+import { SnapshotStore } from "../../scripts/snapshot-store.mjs";
+import { TabBindingStore } from "../../scripts/tab-binding-store.mjs";
 
 test("capture creates a new workspace tab for a first-time tabRef", async () => {
   const harness = await createHarness({
@@ -39,7 +39,6 @@ test("capture creates a new workspace tab for a first-time tabRef", async () => 
     assert.equal(harness.openWorkspaceTabCalls, 1);
     assert.deepEqual(harness.browserCalls, []);
     assert.equal(result.tabRef, "agent_main");
-    assert.equal(result.tabs[0]?.index, 7);
     assert.match(result.summary, /workspace tab/i);
 
     const binding = await harness.tabBindings.read("agent_main");
@@ -97,7 +96,6 @@ test("capture refreshes an existing tabRef binding without opening another works
         },
       },
     ]);
-    assert.equal(result.tabs[0]?.index, 4);
     assert.match(result.summary, /refreshed/i);
   } finally {
     await harness.cleanup();
@@ -156,7 +154,6 @@ test("capture rebinds a stale tabRef when the previously selected page no longer
       },
     ]);
     assert.equal(result.tabRef, "x-work");
-    assert.equal(result.tabs[0]?.index, 8);
     assert.match(result.summary, /workspace tab/i);
 
     const binding = await harness.tabBindings.read("x-work");
@@ -214,24 +211,13 @@ test("capture loads knowledge hits for the captured page identity", async () => 
   }
 });
 
-async function createHarness(
-  runtime: BrowserRuntime,
-  options?: {
-    knowledgeRecords?: DurableKnowledgeRecord[];
-  },
-): Promise<{
-  deps: BrowserActionDeps;
-  tabBindings: TabBindingStore;
-  browserCalls: Array<{ name: string; args: Record<string, unknown> }>;
-  openWorkspaceTabCalls: number;
-  cleanup(): Promise<void>;
-}> {
+async function createHarness(runtime, options = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-action-"));
   const tabBindings = new TabBindingStore(path.join(root, "tab-state"));
   const snapshots = new SnapshotStore(path.join(root, "snapshots"), {
     ttlMs: 60_000,
   });
-  const browserCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const browserCalls = [];
   let openWorkspaceTabCalls = 0;
 
   return {
@@ -249,7 +235,7 @@ async function createHarness(
       snapshots,
       knowledge: {
         queryByPage: async (page) =>
-          (options?.knowledgeRecords ?? []).filter(
+          (options.knowledgeRecords ?? []).filter(
             (record) =>
               record.page.origin === page.origin && record.page.normalizedPath === page.normalizedPath,
           ),

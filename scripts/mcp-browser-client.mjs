@@ -204,7 +204,7 @@ function formatChromeConnectionGuidance(name, detail) {
     "2. In Chrome, open chrome://inspect/#remote-debugging.",
     "3. Turn on remote debugging for that Chrome session.",
     "4. If Chrome prompts you to allow Chrome DevTools MCP to connect, click Allow.",
-    "5. Re-run: node dist/scripts/capture.js --tab-ref main",
+    "5. Re-run the direct-run browser session daemon and try again.",
     "",
     `Original MCP error: ${detail}`,
   ].join("\n");

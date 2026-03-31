@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { HTTP_ENDPOINTS, HTTP_ENDPOINT_NAMES, assertHttpRequestBody, shapeHttpPublicResult } from "../../server/http-contract.mjs";
-import { createHttpRouteHandler } from "../../server/http-routes.mjs";
+import { HTTP_ENDPOINTS, HTTP_ENDPOINT_NAMES, assertHttpRequestBody, shapeHttpPublicResult } from "../../scripts/http-contract.mjs";
+import { createHttpRouteHandler } from "../../scripts/http-routes.mjs";
 
 test("HTTP endpoint contract is frozen to the browser-skill active surface", () => {
   assert.deepEqual(HTTP_ENDPOINT_NAMES, [

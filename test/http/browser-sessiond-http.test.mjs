@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { requestJson, startBrowserSessionDaemon } from "../../server/http-client.mjs";
+import { requestJson, startBrowserSessionDaemon } from "../../scripts/http-client.mjs";
 
 function createFakeBrowserBridge() {
   const state = {
