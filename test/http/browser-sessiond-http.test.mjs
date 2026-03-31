@@ -98,6 +98,7 @@ test("browser-sessiond serves /health over HTTP and refreshes lastSeenAt", async
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
   const { daemon, metadata } = await startBrowserSessionDaemon({
     sessionRoot: path.join(root, "session"),
+    port: 0,
     runtimeVersion: "test-http",
     runtimeRoots: createIsolatedRuntimeRoots(root),
     createMcpBridge: async () => ({ ...createFakeBrowserBridge() }),
@@ -124,6 +125,7 @@ test("browser-sessiond routes capture over HTTP and strips snapshotPath from pub
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
   const { daemon, metadata } = await startBrowserSessionDaemon({
     sessionRoot: path.join(root, "session"),
+    port: 0,
     runtimeVersion: "test-http",
     runtimeRoots: createIsolatedRuntimeRoots(root),
     createMcpBridge: async () => ({ ...createFakeBrowserBridge() }),
@@ -152,6 +154,7 @@ test("browser-sessiond routes actions, query-snapshot, and record-knowledge thro
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
   const { daemon, metadata } = await startBrowserSessionDaemon({
     sessionRoot: path.join(root, "session"),
+    port: 0,
     runtimeVersion: "test-http",
     runtimeRoots: createIsolatedRuntimeRoots(root),
     createMcpBridge: async () => ({ ...createFakeBrowserBridge() }),
@@ -206,6 +209,7 @@ test("browser-sessiond shutdown closes the direct-run HTTP server", async () => 
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
   const { daemon, metadata } = await startBrowserSessionDaemon({
     sessionRoot: path.join(root, "session"),
+    port: 0,
     runtimeVersion: "test-http",
     runtimeRoots: createIsolatedRuntimeRoots(root),
     createMcpBridge: async () => ({ ...createFakeBrowserBridge() }),

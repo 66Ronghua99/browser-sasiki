@@ -13,7 +13,7 @@ Use this skill for browser automation tasks. The skill keeps one daemon-owned br
 
 Make sure the target Chrome session is already running with remote debugging enabled and Chrome DevTools MCP can attach. Then start the daemon:
 
-`node skill/scripts/browser-sessiond.mjs`
+`node scripts/browser-sessiond.mjs`
 
 Confirm it is healthy:
 

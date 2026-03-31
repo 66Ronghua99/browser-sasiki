@@ -2,8 +2,9 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { realpathSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -25,6 +26,7 @@ import { HttpError } from "./http-contract.mjs";
 import { createHttpRouteHandler } from "./http-routes.mjs";
 
 export const DEFAULT_RUNTIME_VERSION = "0.1.0";
+export const DEFAULT_HTTP_PORT = 3456;
 const DEFAULT_SNAPSHOT_TTL_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_WORKSPACE_TAB_URL = "chrome://newtab/";
 
@@ -33,7 +35,7 @@ export class BrowserSessionDaemon {
     this.env = options.env ?? (process.env);
     this.runtimeVersion = options.runtimeVersion ?? DEFAULT_RUNTIME_VERSION;
     this.host = options.host ?? "127.0.0.1";
-    this.port = options.port ?? 0;
+    this.port = options.port ?? DEFAULT_HTTP_PORT;
     this.sessionRoot = options.sessionRoot ?? resolveDefaultSessionRoot();
     this.browserUrl = options.browserUrl ?? null;
     this.connectionMode = options.connectionMode ?? null;
@@ -499,6 +501,18 @@ function browserUrlFromLaunchOptions(launchOptions) {
   return null;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+export function isDirectRunEntry(importMetaUrl, argv1 = process.argv[1]) {
+  if (!argv1) {
+    return false;
+  }
+
+  try {
+    return realpathSync.native(argv1) === realpathSync.native(fileURLToPath(importMetaUrl));
+  } catch {
+    return path.resolve(argv1) === path.resolve(fileURLToPath(importMetaUrl));
+  }
+}
+
+if (isDirectRunEntry(import.meta.url)) {
   await main();
 }

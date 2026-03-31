@@ -168,7 +168,7 @@ test("SKILL front door teaches curl-based http usage, automatic knowledge hits, 
 
   assert.match(content, /curl -s .*\/health/i);
   assert.match(content, /curl -s -X POST .*\/capture/i);
-  assert.match(content, /node skill\/scripts\/browser-sessiond\.mjs/i);
+  assert.match(content, /node (skill\/)?scripts\/browser-sessiond\.mjs/i);
   assert.match(content, /knowledgeHits auto-load/i);
   assert.match(content, /must successfully call `record-knowledge` before the final answer/i);
   assert.doesNotMatch(content, /read-knowledge/i);

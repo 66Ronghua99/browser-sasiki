@@ -412,6 +412,7 @@ async function createSessionClientHarness() {
       launches += 1;
       daemon = await startBrowserSessionDaemon({
         sessionRoot: daemonOptions.sessionRoot,
+        port: 0,
         runtimeVersion: daemonOptions.runtimeVersion,
       });
     },
