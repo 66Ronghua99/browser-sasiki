@@ -13,23 +13,25 @@ Use this skill for browser automation tasks in a real Chrome session. The daemon
 
 Make sure the target Chrome session is already running with remote debugging enabled.
 
-Start the daemon:
+Start or reuse the daemon through the startup helper:
 
-`node scripts/browser-sessiond.mjs`
+`node scripts/ensure-browser-session.mjs`
 
-Confirm it is healthy:
+This command waits for the daemon to become healthy and prints the current session metadata.
 
-`curl -s http://127.0.0.1:3456/health`
+Read `baseUrl` from that JSON output and use it for the remaining HTTP calls. The default is usually `http://127.0.0.1:3456`.
 
-Do not start browser work until `/health` returns `ok: true`.
+If you need to read health explicitly after that, use:
+
+`curl -s "$BASE_URL/health"`
 
 ## Decide The Next Call
 
-- Use `/workspaces` when you need a fresh workspace entry for a task.
-- Use `/tabs` when you need the current tab inventory for a workspace.
-- Use `/select-tab` when you know the workspace tab you want to work in.
-- Use `/navigate`, `/click`, `/type`, `/press`, and `/query` when you already know the next browser action.
-- Use `/record-knowledge` before the final answer when this run exposed a stable reusable cue.
+- Use `POST /workspaces` when you need a fresh workspace entry for a task.
+- Use `GET /tabs` when you need the current tab inventory for a workspace.
+- Use `POST /select-tab` when you know the workspace tab you want to work in.
+- Use `POST /navigate`, `POST /click`, `POST /type`, `POST /press`, and `POST /query` when you already know the next browser action.
+- Use `POST /record-knowledge` before the final answer when this run exposed a stable reusable cue.
 
 Keep the loop small:
 
@@ -121,30 +123,47 @@ If one of those triggers happened and no knowledge was recorded, the task is not
 - `POST /record-knowledge`
 - `POST /shutdown`
 
+## Startup Front Door
+
+Use `node scripts/ensure-browser-session.mjs` only to start or reuse the daemon.
+
+- It waits for `/health` and prints the current session metadata.
+- After that, keep using the daemon's HTTP endpoints directly.
+- Do not introduce a second shell RPC layer for browser actions.
+
 ## Request Examples
 
 ```bash
-curl -s http://127.0.0.1:3456/health
+node scripts/ensure-browser-session.mjs
 
-curl -s -X POST http://127.0.0.1:3456/workspaces
+curl -s -X POST "$BASE_URL/workspaces" \
+  -H 'content-type: application/json' \
+  -d '{}'
 
-curl -s "http://127.0.0.1:3456/tabs?workspaceRef=workspace_demo"
+curl -s "$BASE_URL/tabs?workspaceRef=workspace_demo"
 
-curl -s -X POST "http://127.0.0.1:3456/select-tab?workspaceRef=workspace_demo&workspaceTabRef=workspace_tab_demo"
+curl -s -X POST "$BASE_URL/select-tab?workspaceRef=workspace_demo&workspaceTabRef=workspace_tab_demo" \
+  -H 'content-type: application/json' \
+  -d '{}'
 
-curl -s -X POST "http://127.0.0.1:3456/query?workspaceRef=workspace_demo" \
+curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
+  -H 'content-type: application/json' \
   -d '{"mode":"search","query":"Zara Zhang"}'
 
-curl -s -X POST "http://127.0.0.1:3456/query?workspaceRef=workspace_demo" \
+curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
+  -H 'content-type: application/json' \
   -d '{"mode":"full"}'
 
-curl -s -X POST "http://127.0.0.1:3456/navigate?workspaceRef=workspace_demo" \
+curl -s -X POST "$BASE_URL/navigate?workspaceRef=workspace_demo" \
+  -H 'content-type: application/json' \
   -d '{"url":"https://example.com"}'
 
-curl -s -X POST "http://127.0.0.1:3456/click?workspaceRef=workspace_demo" \
+curl -s -X POST "$BASE_URL/click?workspaceRef=workspace_demo" \
+  -H 'content-type: application/json' \
   -d '{"uid":"submit_button"}'
 
-curl -s -X POST "http://127.0.0.1:3456/record-knowledge?workspaceRef=workspace_demo" \
+curl -s -X POST "$BASE_URL/record-knowledge?workspaceRef=workspace_demo" \
+  -H 'content-type: application/json' \
   -d '{"guide":"Promo code field is below the order summary.","keywords":["checkout","promo","summary"],"rationale":"The order summary and promo field are visible together on the checkout page."}'
 ```
 

@@ -11,54 +11,63 @@ Browser Skill is a workspace-first browser automation skill for coding agents. I
 
 ## Quick Start
 
-Start the daemon:
+Start or reuse the daemon through the startup helper:
 
 ```bash
-node skill/scripts/browser-sessiond.mjs
+node skill/scripts/ensure-browser-session.mjs
 ```
 
-Check health:
+That command prints session metadata. Read `baseUrl` from the JSON output and use it for the remaining HTTP calls. The default is usually `http://127.0.0.1:3456`.
+
+If you need an explicit health read after that:
 
 ```bash
-curl -s http://127.0.0.1:3456/health
+curl -s "$BASE_URL/health"
 ```
 
 Open a workspace:
 
 ```bash
-curl -s -X POST http://127.0.0.1:3456/workspaces
+curl -s -X POST "$BASE_URL/workspaces" \
+  -H 'content-type: application/json' \
+  -d '{}'
 ```
 
 List the tabs for that workspace:
 
 ```bash
-curl -s "http://127.0.0.1:3456/tabs?workspaceRef=workspace_demo"
+curl -s "$BASE_URL/tabs?workspaceRef=workspace_demo"
 ```
 
 Select a tab:
 
 ```bash
-curl -s -X POST "http://127.0.0.1:3456/select-tab?workspaceRef=workspace_demo&workspaceTabRef=workspace_tab_demo"
+curl -s -X POST "$BASE_URL/select-tab?workspaceRef=workspace_demo&workspaceTabRef=workspace_tab_demo" \
+  -H 'content-type: application/json' \
+  -d '{}'
 ```
 
 Inspect the current page:
 
 ```bash
-curl -s -X POST "http://127.0.0.1:3456/query?workspaceRef=workspace_demo" \
+curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
+  -H 'content-type: application/json' \
   -d '{"mode":"search","query":"Search"}'
 ```
 
 Inspect the full current page snapshot:
 
 ```bash
-curl -s -X POST "http://127.0.0.1:3456/query?workspaceRef=workspace_demo" \
+curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
+  -H 'content-type: application/json' \
   -d '{"mode":"full"}'
 ```
 
 Navigate:
 
 ```bash
-curl -s -X POST "http://127.0.0.1:3456/navigate?workspaceRef=workspace_demo" \
+curl -s -X POST "$BASE_URL/navigate?workspaceRef=workspace_demo" \
+  -H 'content-type: application/json' \
   -d '{"url":"https://example.com"}'
 ```
 
@@ -101,6 +110,8 @@ curl -s -X POST "http://127.0.0.1:3456/navigate?workspaceRef=workspace_demo" \
 ## Runtime Truth
 
 - `browser-sessiond` is the single owner of Chrome attachment, workspace state, snapshots, and knowledge hits.
+- `ensure-browser-session.mjs` is the startup-only shell front door; it starts or reuses the daemon and prints session metadata.
+- HTTP remains the action surface after startup; there is no separate shell RPC layer for `/workspaces`, `/tabs`, `/query`, or mutations.
 - `knowledgeHits` are the normal reusable-knowledge surface during a task.
 - `record-knowledge` is the only explicit durable write path.
 - Normal responses expose workspace identity and page identity, not local snapshot paths.

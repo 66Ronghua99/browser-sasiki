@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,25 +8,23 @@ import { fileURLToPath } from "node:url";
 
 import { requestJson } from "./http-client.mjs";
 import { assertSessionMetadata } from "./session-metadata.mjs";
-import { HTTP_ENDPOINTS, HTTP_REQUEST_QUERY_FIELDS } from "./http-contract.mjs";
-import {
-  assertSessionRpcRequest,
-  assertWorkspaceResult,
-  assertWorkspaceTabResult,
-  assertWorkspaceTabsResult,
-} from "./session-contract.mjs";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 5_000;
 const DEFAULT_RUNTIME_VERSION = "0.1.0";
-const injectedSessionCache = new Map();
+const browserSessionCache = new Map();
 
-export async function ensureSessionDaemon(options = {}) {
+const USAGE = [
+  "Usage:",
+  "  node scripts/ensure-browser-session.mjs [--session-root <path>] [--runtime-version <version>] [--startup-timeout-ms <ms>]",
+].join("\n");
+
+export async function ensureBrowserSession(options = {}) {
   const env = options.env ?? process.env;
   const paths = resolveSessionPaths(options.sessionRoot);
   const runtimeVersion = await resolveRequestedRuntimeVersion(options);
 
   if (options.launchDaemon) {
-    const cached = injectedSessionCache.get(paths.sessionRoot);
+    const cached = browserSessionCache.get(paths.sessionRoot);
     if (
       cached
       && cached.runtimeVersion === runtimeVersion
@@ -38,7 +36,7 @@ export async function ensureSessionDaemon(options = {}) {
 
     if (cached) {
       await requestShutdown(cached.baseUrl);
-      injectedSessionCache.delete(paths.sessionRoot);
+      browserSessionCache.delete(paths.sessionRoot);
     }
   }
 
@@ -51,14 +49,14 @@ export async function ensureSessionDaemon(options = {}) {
       && isProcessAlive(existing.pid)
       && (await tryHealthcheck(existing.baseUrl)) !== null
     ) {
-      injectedSessionCache.set(paths.sessionRoot, existing);
+      browserSessionCache.set(paths.sessionRoot, existing);
       return existing;
     }
 
     const healthy = await tryHealthcheck(existing.baseUrl);
     if (healthy && healthy.runtimeVersion === runtimeVersion) {
       if (options.launchDaemon) {
-        injectedSessionCache.set(paths.sessionRoot, healthy);
+        browserSessionCache.set(paths.sessionRoot, healthy);
       }
       return healthy;
     }
@@ -68,10 +66,10 @@ export async function ensureSessionDaemon(options = {}) {
     }
 
     await cleanupStaleSession(paths);
-    injectedSessionCache.delete(paths.sessionRoot);
+    browserSessionCache.delete(paths.sessionRoot);
   }
 
-  const launchDaemon = options.launchDaemon ?? defaultLaunchDaemon;
+  const launchDaemon = options.launchDaemon ?? defaultLaunchBrowserSessionDaemon;
   await launchDaemon({
     env,
     sessionRoot: paths.sessionRoot,
@@ -81,7 +79,7 @@ export async function ensureSessionDaemon(options = {}) {
   if (options.launchDaemon) {
     const launchedMetadata = await readSessionMetadata(paths.metadataPath);
     if (launchedMetadata) {
-      injectedSessionCache.set(paths.sessionRoot, launchedMetadata);
+      browserSessionCache.set(paths.sessionRoot, launchedMetadata);
       return launchedMetadata;
     }
   }
@@ -93,7 +91,7 @@ export async function ensureSessionDaemon(options = {}) {
       const healthy = await tryHealthcheck(metadata.baseUrl);
       if (healthy) {
         if (options.launchDaemon) {
-          injectedSessionCache.set(paths.sessionRoot, healthy);
+          browserSessionCache.set(paths.sessionRoot, healthy);
         }
         return healthy;
       }
@@ -104,121 +102,72 @@ export async function ensureSessionDaemon(options = {}) {
   throw new Error("Timed out waiting for browser-sessiond to become healthy");
 }
 
-export async function sendSessionRpcRequest(requestOrMethod, paramsOrOptions, maybeOptions) {
-  const envelope = normalizeRequest(requestOrMethod, paramsOrOptions);
-  const options = isEnvelope(requestOrMethod)
-    ? paramsOrOptions
-    : maybeOptions;
-  assertSessionRpcRequest(envelope);
-
-  const metadata = await ensureSessionDaemon(options);
-  const result = await sendHttpSessionRequest(metadata.baseUrl, envelope);
-  return validateSessionResult(envelope.method, result);
+export async function runEnsureBrowserSessionCli(argv = process.argv.slice(2), deps = {}) {
+  const options = parseCliArgs(argv);
+  return (deps.ensureBrowserSession ?? ensureBrowserSession)(options);
 }
 
-function normalizeRequest(requestOrMethod, paramsOrOptions) {
-  if (isEnvelope(requestOrMethod)) {
-    return requestOrMethod;
-  }
+function parseCliArgs(argv) {
+  const options = {};
 
-  return {
-    requestId: randomUUID(),
-    method: requestOrMethod,
-    params: paramsOrOptions ?? {},
-  };
-}
-
-function isEnvelope(value) {
-  return typeof value === "object" && value !== null && "method" in value;
-}
-
-async function sendHttpSessionRequest(baseUrl, request) {
-  const endpoint = resolveHttpEndpointName(request.method);
-  const definition = HTTP_ENDPOINTS[endpoint];
-  const url = new URL(definition.path, baseUrl);
-  const queryFields = HTTP_REQUEST_QUERY_FIELDS[endpoint] ?? [];
-  for (const field of queryFields) {
-    const value = request.params[field];
-    if (value !== undefined) {
-      url.searchParams.set(field, value);
-    }
-  }
-
-  const body = buildRequestBody(request.params, queryFields);
-  const requestBody = definition.method === "GET" ? undefined : (body ?? {});
-  return requestJson(
-    definition.method,
-    url.href,
-    requestBody,
-  );
-}
-
-function validateSessionResult(method, result) {
-  switch (method) {
-    case "health":
-      assertSessionMetadata(result);
-      return result;
-    case "openWorkspace":
-    case "listTabs":
-      assertWorkspaceTabsResult(result);
-      return result;
-    case "navigate":
-    case "click":
-    case "type":
-    case "press":
-    case "query":
-    case "recordKnowledge":
-      assertWorkspaceResult(result);
-      return result;
-    case "selectTab":
-      assertWorkspaceTabResult(result);
-      return result;
-    case "shutdown":
-      return result;
-    default:
-      return result;
-  }
-}
-
-function resolveHttpEndpointName(method) {
-  switch (method) {
-    case "health":
-    case "shutdown":
-      return method;
-    case "openWorkspace":
-      return "workspaces";
-    case "listTabs":
-      return "tabs";
-    case "selectTab":
-    case "navigate":
-    case "click":
-    case "type":
-    case "press":
-    case "query":
-    case "recordKnowledge":
-      return method;
-    default:
-      return method;
-  }
-}
-
-function buildRequestBody(params, queryFields) {
-  if (queryFields.length === 0) {
-    return Object.keys(params).length === 0 ? undefined : params;
-  }
-
-  const body = {};
-  for (const [key, value] of Object.entries(params)) {
-    if (queryFields.includes(key)) {
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--session-root") {
+      options.sessionRoot = requireOptionValue(argv, ++index, "--session-root");
       continue;
     }
-    body[key] = value;
+    if (arg === "--runtime-version") {
+      options.runtimeVersion = requireOptionValue(argv, ++index, "--runtime-version");
+      continue;
+    }
+    if (arg === "--startup-timeout-ms") {
+      const raw = requireOptionValue(argv, ++index, "--startup-timeout-ms");
+      const parsed = Number.parseInt(raw, 10);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new Error("--startup-timeout-ms must be a positive integer");
+      }
+      options.startupTimeoutMs = parsed;
+      continue;
+    }
+    if (arg === "--help") {
+      throw new Error(USAGE);
+    }
+    throw new Error(
+      `ensure-browser-session does not accept positional commands or action payloads. Use the HTTP endpoints after startup.\n\n${USAGE}`,
+    );
   }
-  return Object.keys(body).length === 0 ? undefined : body;
+
+  return options;
 }
 
-async function defaultLaunchDaemon(options) {
-  const daemonEntry = resolveDaemonEntry();
+function requireOptionValue(argv, index, flag) {
+  const value = argv[index];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return value;
+}
+
+export async function main(argv = process.argv.slice(2)) {
+  const result = await runEnsureBrowserSessionCli(argv);
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  return result;
+}
+
+export function isDirectRunEntry(importMetaUrl, argv1 = process.argv[1]) {
+  if (!argv1) {
+    return false;
+  }
+
+  try {
+    return realpathSync(fileURLToPath(importMetaUrl)) === realpathSync(argv1);
+  } catch {
+    return false;
+  }
+}
+
+async function defaultLaunchBrowserSessionDaemon(options) {
+  const daemonEntry = resolveBrowserSessionDaemonEntry();
   const args = [
     ...daemonEntry.args,
     daemonEntry.entryPath,
@@ -235,7 +184,7 @@ async function defaultLaunchDaemon(options) {
   child.unref();
 }
 
-function resolveDaemonEntry() {
+function resolveBrowserSessionDaemonEntry() {
   const thisFile = fileURLToPath(import.meta.url);
   const runtimeDir = path.dirname(thisFile);
   const packageRoot = path.resolve(runtimeDir, "..");
@@ -301,7 +250,7 @@ async function resolveRequestedRuntimeVersion(options) {
   }
 
   try {
-    const daemonEntry = resolveDaemonEntry();
+    const daemonEntry = resolveBrowserSessionDaemonEntry();
     const entryStat = await stat(daemonEntry.entryPath);
     return `${DEFAULT_RUNTIME_VERSION}+${Math.trunc(entryStat.mtimeMs)}`;
   } catch {
@@ -334,4 +283,11 @@ function isProcessAlive(pid) {
 
 async function sleep(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+if (isDirectRunEntry(import.meta.url)) {
+  main().catch((error) => {
+    process.stderr.write(`${error instanceof Error ? error.message : "Unknown error"}\n`);
+    process.exitCode = 1;
+  });
 }

@@ -100,6 +100,9 @@ test("legacy browser-skill TypeScript and runtime front doors are deleted", () =
     "../../server/http-contract.mjs",
     "../../server/http-routes.mjs",
     "../../scripts/mcp-browser-client.mjs",
+    "../../scripts/session-client-cli.mjs",
+    "../../scripts/session-client.mjs",
+    "../../scripts/session-contract.mjs",
     "../../server/session-client.mjs",
     "../../server/session-contract.mjs",
     "../../server/session-metadata.mjs",
@@ -184,6 +187,7 @@ test("front-door docs teach the workspace-first direct-DevTools surface and excl
   for (const content of [skillContent, readmeContent]) {
     assert.match(content, /workspace-first/i);
     assert.match(content, /direct DevTools/i);
+    assert.match(content, /ensure-browser-session\.mjs/i);
     assert.match(content, /GET \/health/i);
     assert.match(content, /POST \/workspaces/i);
     assert.match(content, /GET \/tabs/i);
@@ -202,5 +206,9 @@ test("front-door docs teach the workspace-first direct-DevTools surface and excl
     assert.doesNotMatch(content, /`snapshotRef`/i);
     assert.doesNotMatch(content, /chrome-devtools-mcp/i);
     assert.doesNotMatch(content, /read-knowledge/i);
+    assert.doesNotMatch(content, /session-client-cli\.mjs/i);
+    assert.doesNotMatch(content, /sendSessionRpcRequest/i);
+    assert.doesNotMatch(content, /node\s+(?:skill\/)?scripts\/browser-sessiond\.mjs/i);
+    assert.match(content, /curl\s+-s\s+-X\s+POST/i);
   }
 });
