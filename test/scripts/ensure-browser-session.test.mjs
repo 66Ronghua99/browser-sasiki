@@ -99,6 +99,62 @@ test("ensure-browser-session reuses healthy session metadata without relaunching
   }
 });
 
+test("ensure-browser-session tolerates slow daemon cold starts before reporting timeout", async () => {
+  const root = await mkdtemp(path.join("/tmp", "browser-session-slow-startup-"));
+  const sessionRoot = path.join(root, "session");
+  await mkdir(sessionRoot, { recursive: true });
+
+  let fakeNow = 0;
+  let server = null;
+
+  try {
+    const result = await ensureBrowserSession({
+      env: {},
+      sessionRoot,
+      runtimeVersion: "0.1.0-test",
+      launchDaemon: async () => {},
+      now: () => fakeNow,
+      sleep: async (ms) => {
+        fakeNow += Math.max(ms, 1_000);
+
+        if (fakeNow < 6_000 || server) {
+          return;
+        }
+
+        server = createServer((req, res) => {
+          const url = new URL(req.url ?? "/", "http://127.0.0.1");
+          if (url.pathname === "/health") {
+            return writeJson(res, 200, {
+              ...sessionMetadataResponse(server.address().port, process.pid),
+              ok: true,
+            });
+          }
+          if (url.pathname === "/shutdown") {
+            return writeJson(res, 200, { ok: true });
+          }
+          return writeJson(res, 404, { ok: false });
+        });
+
+        await new Promise((resolve) => {
+          server.listen(0, "127.0.0.1", resolve);
+        });
+
+        await writeFile(
+          path.join(sessionRoot, "session.json"),
+          `${JSON.stringify(sessionMetadataResponse(server.address().port, process.pid), null, 2)}\n`,
+          "utf8",
+        );
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.runtimeVersion, "0.1.0-test");
+  } finally {
+    await new Promise((resolve) => server?.close(resolve) ?? resolve());
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("ensure-browser-session CLI only accepts startup options and delegates to ensureBrowserSession", async () => {
   const calls = [];
   const result = await runEnsureBrowserSessionCli(

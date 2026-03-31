@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { requestJson } from "./http-client.mjs";
 import { assertSessionMetadata } from "./session-metadata.mjs";
 
-const DEFAULT_STARTUP_TIMEOUT_MS = 5_000;
+const DEFAULT_STARTUP_TIMEOUT_MS = 20_000;
 const DEFAULT_RUNTIME_VERSION = "0.1.0";
 const browserSessionCache = new Map();
 
@@ -22,6 +22,8 @@ export async function ensureBrowserSession(options = {}) {
   const env = options.env ?? process.env;
   const paths = resolveSessionPaths(options.sessionRoot);
   const runtimeVersion = await resolveRequestedRuntimeVersion(options);
+  const now = options.now ?? Date.now;
+  const sleepFn = options.sleep ?? sleep;
 
   if (options.launchDaemon) {
     const cached = browserSessionCache.get(paths.sessionRoot);
@@ -84,8 +86,9 @@ export async function ensureBrowserSession(options = {}) {
     }
   }
 
-  const deadline = Date.now() + (options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS);
-  while (Date.now() < deadline) {
+  const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
+  const deadline = now() + startupTimeoutMs;
+  while (now() < deadline) {
     const metadata = await readSessionMetadata(paths.metadataPath);
     if (metadata) {
       const healthy = await tryHealthcheck(metadata.baseUrl);
@@ -96,10 +99,12 @@ export async function ensureBrowserSession(options = {}) {
         return healthy;
       }
     }
-    await sleep(50);
+    await sleepFn(50);
   }
 
-  throw new Error("Timed out waiting for browser-sessiond to become healthy");
+  throw new Error(
+    `Timed out waiting for browser-sessiond to become healthy after ${startupTimeoutMs}ms`,
+  );
 }
 
 export async function runEnsureBrowserSessionCli(argv = process.argv.slice(2), deps = {}) {
