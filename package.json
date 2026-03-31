@@ -1,7 +1,7 @@
 {
-  "name": "@sasiki/browser-skill",
+  "name": "browser-sasiki",
   "version": "0.1.0",
-  "private": true,
+  "description": "Workspace-first browser automation skill for coding agents",
   "type": "module",
   "engines": {
     "node": ">=20"

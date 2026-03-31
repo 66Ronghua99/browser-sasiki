@@ -185,6 +185,7 @@ test("front-door docs teach the workspace-first direct-DevTools surface and excl
   ]);
 
   for (const content of [skillContent, readmeContent]) {
+    assert.match(content, /browser-sasiki|Browser Sasiki/i);
     assert.match(content, /workspace-first/i);
     assert.match(content, /direct DevTools/i);
     assert.match(content, /ensure-browser-session\.mjs/i);
@@ -211,4 +212,13 @@ test("front-door docs teach the workspace-first direct-DevTools surface and excl
     assert.doesNotMatch(content, /node\s+(?:skill\/)?scripts\/browser-sessiond\.mjs/i);
     assert.match(content, /curl\s+-s\s+-X\s+POST/i);
   }
+
+  assert.match(skillContent, /^name:\s*browser-sasiki$/m);
+  assert.doesNotMatch(skillContent, /^name:\s*browser-skill$/m);
+  assert.match(readmeContent, /cd skill/i);
+  assert.match(readmeContent, /node scripts\/ensure-browser-session\.mjs/i);
+  assert.doesNotMatch(readmeContent, /node skill\/scripts\/ensure-browser-session\.mjs/i);
+  assert.match(readmeContent, /npm test/i);
+  assert.doesNotMatch(readmeContent, /npm --prefix skill test/i);
+  assert.match(readmeContent, /publish mirror|source of truth|single source of truth/i);
 });

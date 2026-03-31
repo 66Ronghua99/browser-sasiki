@@ -2,6 +2,39 @@
 
 Browser Sasiki is a workspace-first browser automation skill for coding agents. Its front door is HTTP-only: one long-lived daemon owns the attached Chrome session, and agents interact with it through direct DevTools-backed JSON endpoints instead of per-command CLI wrappers.
 
+## Source Of Truth
+
+- In the Sasiki monorepo, this directory `skill/` is the single source of truth.
+- The public repo `66Ronghua99/browser-sasiki` is a publish mirror of this directory.
+- Day-to-day development should happen here first, then be published outward from Sasiki.
+
+## Install
+
+### Install from the standalone mirror
+
+If you want to install this skill into Codex or another coding agent, use the public mirror:
+
+- repo: `66Ronghua99/browser-sasiki`
+- path: `.`
+
+One line you can send to a coding agent:
+
+```text
+Please install the `browser-sasiki` skill from the GitHub repo `66Ronghua99/browser-sasiki` at path `.`, restart your agent if needed, and then use that skill for browser automation tasks.
+```
+
+## Working Directory
+
+Run the commands below from the skill root.
+
+If you are inside the Sasiki repo:
+
+```bash
+cd skill
+```
+
+If you are inside the standalone `browser-sasiki` repo, you are already in the right directory.
+
 ## Runtime Requirements
 
 - Node `>=20`
@@ -14,7 +47,7 @@ Browser Sasiki is a workspace-first browser automation skill for coding agents. 
 Start or reuse the daemon through the startup helper:
 
 ```bash
-node skill/scripts/ensure-browser-session.mjs
+node scripts/ensure-browser-session.mjs
 ```
 
 That command prints session metadata. Read `baseUrl` from the JSON output and use it for the remaining HTTP calls. The default is usually `http://127.0.0.1:3456`.
@@ -120,12 +153,12 @@ curl -s -X POST "$BASE_URL/navigate?workspaceRef=workspace_demo" \
 ## Stored Data
 
 - runtime temp state: `~/.sasiki/browser-skill/tmp/`
-- durable page knowledge: `skill/knowledge/page-knowledge.jsonl`
+- durable page knowledge: `knowledge/page-knowledge.jsonl`
 
 ## Verification
 
-Current migration-period checks:
+Run the skill test suite from the skill root:
 
 ```bash
-npm --prefix skill test
+npm test
 ```
