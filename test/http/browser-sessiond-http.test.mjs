@@ -184,28 +184,30 @@ test("browser-sessiond routes actions, query-snapshot, and record-knowledge thro
 
     const query = await requestJson("POST", `${metadata.baseUrl}/query-snapshot`, {
       tabRef: "main",
-      mode: "auto",
-      query: "Submit",
+      mode: "search",
+      query: "Submit 3",
     });
     assert.equal(query.ok, true);
     assert.equal(query.page.normalizedPath, "/dashboard");
     assert.equal(query.knowledgeHits.length > 0, true);
     assert.equal("snapshotPath" in query, false);
+    assert.equal(query.matches.length, 1);
+    assert.equal(query.matches[0]?.uid, "submit_button");
 
     const repeatQuery = await requestJson("POST", `${metadata.baseUrl}/query-snapshot`, {
-      tabRef: "main",
-      mode: "auto",
-      query: "Submit",
+      snapshotRef: capture.snapshotRef,
+      mode: "full",
     });
     assert.equal(repeatQuery.ok, true);
-    assert.equal(repeatQuery.knowledgeHits.length > 0, true);
+    assert.equal(repeatQuery.snapshotRef, capture.snapshotRef);
+    assert.match(repeatQuery.snapshotText, /Submit 1/);
   } finally {
     await daemon.stop();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("browser-sessiond accepts ref aliases for click and query-snapshot selectors", async () => {
+test("query-snapshot refreshes the live tab for tabRef queries but keeps snapshotRef exact", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
   const { daemon, metadata } = await startBrowserSessionDaemon({
     sessionRoot: path.join(root, "session"),
@@ -221,21 +223,21 @@ test("browser-sessiond accepts ref aliases for click and query-snapshot selector
     });
     assert.equal(capture.ok, true);
 
-    const click = await requestJson("POST", `${metadata.baseUrl}/click`, {
+    const liveQuery = await requestJson("POST", `${metadata.baseUrl}/query-snapshot`, {
       tabRef: "main",
-      ref: "submit_button",
+      mode: "full",
     });
-    assert.equal(click.ok, true);
+    assert.equal(liveQuery.ok, true);
+    assert.notEqual(liveQuery.snapshotRef, capture.snapshotRef);
+    assert.match(liveQuery.snapshotText, /Submit 2/);
 
-    const query = await requestJson("POST", `${metadata.baseUrl}/query-snapshot`, {
-      tabRef: "main",
-      mode: "search",
-      ref: "submit_button",
+    const exactQuery = await requestJson("POST", `${metadata.baseUrl}/query-snapshot`, {
+      snapshotRef: capture.snapshotRef,
+      mode: "full",
     });
-    assert.equal(query.ok, true);
-    assert.equal(query.mode, "search");
-    assert.equal(query.matches.length, 1);
-    assert.equal(query.matches[0].ref, "submit_button");
+    assert.equal(exactQuery.ok, true);
+    assert.equal(exactQuery.snapshotRef, capture.snapshotRef);
+    assert.match(exactQuery.snapshotText, /Submit 1/);
   } finally {
     await daemon.stop().catch(() => {});
     await rm(root, { recursive: true, force: true });

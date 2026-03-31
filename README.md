@@ -37,7 +37,14 @@ Inspect the current page:
 
 ```bash
 curl -s -X POST http://127.0.0.1:3456/query-snapshot \
-  -d '{"tabRef":"main","mode":"auto"}'
+  -d '{"tabRef":"main","mode":"search","query":"Search"}'
+```
+
+Inspect the full current page snapshot:
+
+```bash
+curl -s -X POST http://127.0.0.1:3456/query-snapshot \
+  -d '{"tabRef":"main","mode":"full"}'
 ```
 
 Navigate:
@@ -63,15 +70,26 @@ curl -s -X POST http://127.0.0.1:3456/navigate \
 ## Request Fields
 
 - `tabRef`: logical workspace tab name
-- `snapshotRef`: daemon-generated snapshot handle
+- `snapshotRef`: daemon-generated snapshot handle for an exact stored snapshot lookup
 - `url`: absolute navigation target for `/navigate`
 - `uid`: element handle from the latest snapshot
 - `text`: text content for `/type`
 - `key`: keyboard key for `/press`
 - `pageId`: explicit existing Chrome tab id for `/select-tab`
-- `mode`: one of `search`, `auto`, or `full` for `/query-snapshot`
-- `query`, `role`: query selectors for `/query-snapshot`
+- `mode`: required for `/query-snapshot`; use `search` or `full`
+- `query`, `role`, `uid`: search selectors for `/query-snapshot`
 - `guide`, `keywords`, `rationale`: durable knowledge fields for `/record-knowledge`
+
+## `query-snapshot` Usage
+
+- `tabRef` means live query: the daemon refreshes the bound browser tab first, then runs the query against that fresh snapshot.
+- `snapshotRef` means exact query: the daemon reads the referenced stored snapshot as-is.
+- Use exactly one of `tabRef` or `snapshotRef`.
+- Use `mode: "search"` when you want compact `matches`.
+- Use `mode: "full"` when you want the entire `snapshotText`.
+- With `mode: "search"`, send at least one of `query`, `role`, or `uid`.
+- With `mode: "full"`, do not send selector fields.
+- Repeating a `snapshotRef` query later does not refresh it. If you need the latest page state, query by `tabRef`.
 
 ## Runtime Truth
 
@@ -80,6 +98,7 @@ curl -s -X POST http://127.0.0.1:3456/navigate \
 - `record-knowledge` is the only explicit durable write path.
 - Normal responses expose `snapshotRef`, not `snapshotPath`.
 - There is no active `read-knowledge` front door.
+- `uid` is the only public element handle for browser actions and `query-snapshot`.
 
 ## Stored Data
 

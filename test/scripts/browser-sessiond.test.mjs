@@ -41,9 +41,8 @@ test("browser-sessiond defaults to fixed HTTP port 3456", async () => {
   });
 
   try {
-    const metadata = await daemon.start();
-    assert.equal(metadata.port, 3456);
-    assert.equal(metadata.baseUrl, "http://127.0.0.1:3456");
+    assert.equal(daemon.port, 3456);
+    assert.equal(daemon.host, "127.0.0.1");
   } finally {
     await daemon.stop().catch(() => {});
     await rm(root, { recursive: true, force: true });

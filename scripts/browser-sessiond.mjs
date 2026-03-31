@@ -134,9 +134,9 @@ export class BrowserSessionDaemon {
       case "navigate":
         return this.browserAction("navigate", "navigate_page", { type: "url", url: body.url }, body.tabRef);
       case "click":
-        return this.browserAction("click", "click", { uid: body.uid ?? body.ref }, body.tabRef);
+        return this.browserAction("click", "click", { uid: body.uid }, body.tabRef);
       case "type":
-        return this.browserAction("type", "fill", { uid: body.uid ?? body.ref, value: body.text }, body.tabRef);
+        return this.browserAction("type", "fill", { uid: body.uid, value: body.text }, body.tabRef);
       case "press":
         return this.browserAction("press", "press_key", { key: body.key }, body.tabRef);
       case "selectTab":
@@ -257,15 +257,16 @@ export class BrowserSessionDaemon {
   }
 
   async querySnapshot(params) {
-    const resolved = await this.resolveSnapshotContext(params);
+    const resolved = params.tabRef
+      ? await this.refreshSnapshotContextForTab(params.tabRef)
+      : await this.resolveSnapshotContext(params);
     const knowledgeHits = await this.readKnowledgeHits(resolved.page);
     const queryResult = querySnapshotText({
       snapshotText: resolved.snapshotText,
-      mode: params.mode ?? "auto",
+      mode: params.mode,
       text: params.query,
       role: params.role,
       uid: params.uid,
-      ref: params.ref,
       knowledgeHits,
       page: resolved.page,
     });
@@ -276,7 +277,7 @@ export class BrowserSessionDaemon {
       ...(resolved.tabRef !== undefined ? { tabRef: resolved.tabRef } : {}),
       snapshotRef: resolved.snapshotRef,
       knowledgeHits,
-      summary: queryResult.summary,
+      summary: `${resolved.source === "live-tab" ? "Refreshed the live tab before querying. " : "Queried the exact referenced snapshot. "}${queryResult.summary}`,
     };
   }
 
@@ -340,6 +341,25 @@ export class BrowserSessionDaemon {
       snapshotPath,
       snapshotText,
       page: pageIdentityFromSnapshotText(snapshotText),
+      source: "snapshot-ref",
+    };
+  }
+
+  async refreshSnapshotContextForTab(tabRef) {
+    const bindingExists = await this.tabBindings.exists(tabRef);
+    if (!bindingExists) {
+      throw new Error(`No tab binding exists for ${tabRef}; call /capture first`);
+    }
+
+    const refreshed = await runCaptureFlow({ tabRef }, this.actionDeps);
+    const snapshotText = await this.snapshots.read(refreshed.snapshotPath);
+    return {
+      tabRef,
+      snapshotRef: snapshotRefFromPath(refreshed.snapshotPath),
+      snapshotPath: refreshed.snapshotPath,
+      snapshotText,
+      page: refreshed.page,
+      source: "live-tab",
     };
   }
 

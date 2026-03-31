@@ -15,11 +15,11 @@ export const SESSION_RPC_REQUEST_FIELDS = Object.freeze({
   health: [],
   capture: ["tabRef", "pageId"],
   navigate: ["tabRef", "url"],
-  click: ["tabRef", "uid", "ref"],
-  type: ["tabRef", "uid", "ref", "text", "submit", "slowly"],
+  click: ["tabRef", "uid"],
+  type: ["tabRef", "uid", "text", "submit", "slowly"],
   press: ["tabRef", "key"],
   selectTab: ["tabRef", "pageId"],
-  querySnapshot: ["tabRef", "snapshotRef", "mode", "query", "role", "uid", "ref"],
+  querySnapshot: ["tabRef", "snapshotRef", "mode", "query", "role", "uid"],
   recordKnowledge: ["tabRef", "snapshotRef", "page", "guide", "keywords", "rationale", "knowledgeRef"],
   shutdown: [],
 });
@@ -76,7 +76,7 @@ function assertSessionRpcParams(method, params) {
       if (method === "navigate") {
         assertString(params.url, "params.url");
       } else if (method === "click") {
-        assertSelector(params, "params");
+        assertUid(params, "params");
       } else if (method === "press") {
         assertString(params.key, "params.key");
       } else {
@@ -85,7 +85,7 @@ function assertSessionRpcParams(method, params) {
       return;
     case "type":
       assertString(params.tabRef, "params.tabRef");
-      assertSelector(params, "params");
+      assertUid(params, "params");
       assertString(params.text, "params.text");
       if (params.submit !== undefined) {
         assertBoolean(params.submit, "params.submit");
@@ -95,8 +95,8 @@ function assertSessionRpcParams(method, params) {
       }
       return;
     case "querySnapshot":
-      if (params.tabRef === undefined && params.snapshotRef === undefined) {
-        throw new TypeError("querySnapshot params must include tabRef or snapshotRef");
+      if ((params.tabRef === undefined) === (params.snapshotRef === undefined)) {
+        throw new TypeError("querySnapshot params must include exactly one of tabRef or snapshotRef");
       }
       if (params.tabRef !== undefined) {
         assertString(params.tabRef, "params.tabRef");
@@ -104,8 +104,11 @@ function assertSessionRpcParams(method, params) {
       if (params.snapshotRef !== undefined) {
         assertString(params.snapshotRef, "params.snapshotRef");
       }
-      if (params.mode !== undefined && params.mode !== "search" && params.mode !== "auto" && params.mode !== "full") {
-        throw new TypeError('params.mode must be search, auto, or full');
+      if (params.mode === undefined) {
+        throw new TypeError('params.mode must be search or full');
+      }
+      if (params.mode !== "search" && params.mode !== "full") {
+        throw new TypeError('params.mode must be search or full');
       }
       if (params.query !== undefined) {
         assertString(params.query, "params.query");
@@ -116,8 +119,11 @@ function assertSessionRpcParams(method, params) {
       if (params.uid !== undefined) {
         assertString(params.uid, "params.uid");
       }
-      if (params.ref !== undefined) {
-        assertString(params.ref, "params.ref");
+      if (params.mode === "full" && (params.query !== undefined || params.role !== undefined || params.uid !== undefined)) {
+        throw new TypeError("querySnapshot full mode does not accept selector fields such as query, role, or uid");
+      }
+      if (params.mode === "search" && params.query === undefined && params.role === undefined && params.uid === undefined) {
+        throw new TypeError("querySnapshot search mode requires at least one selector: query, role, or uid");
       }
       return;
     case "recordKnowledge":
@@ -162,16 +168,11 @@ function assertAllowedRequestFields(method, params) {
   }
 }
 
-function assertSelector(params, label) {
-  if (params.uid === undefined && params.ref === undefined) {
-    throw new TypeError(`${label} must include uid or ref`);
+function assertUid(params, label) {
+  if (params.uid === undefined) {
+    throw new TypeError(`${label} must include uid`);
   }
-  if (params.uid !== undefined) {
-    assertString(params.uid, `${label}.uid`);
-  }
-  if (params.ref !== undefined) {
-    assertString(params.ref, `${label}.ref`);
-  }
+  assertString(params.uid, `${label}.uid`);
 }
 
 function assertSessionRuntimeRef(value) {

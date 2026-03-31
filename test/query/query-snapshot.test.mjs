@@ -121,36 +121,11 @@ test("querySnapshotText parses role-only accessibility nodes without labels", ()
   assert.equal(textResult.matches[0].uid, "1_3");
 });
 
-test("querySnapshotText auto mode falls back to full snapshot content without knowledge", () => {
+test("querySnapshotText search mode narrows matches with explicit selectors even when knowledge exists", () => {
   const result = querySnapshotText({
     snapshotText,
-    mode: "auto",
-  });
-
-  assert.equal(result.mode, "full");
-  assert.equal(result.snapshotText, snapshotText);
-});
-
-test("querySnapshotText auto mode falls back to full snapshot content when knowledge is stale", () => {
-  const result = querySnapshotText({
-    snapshotText,
-    mode: "auto",
-    knowledgeHits: [
-      {
-        guide: "Use the footer export button.",
-        keywords: ["archive", "download"],
-      },
-    ],
-  });
-
-  assert.equal(result.mode, "full");
-  assert.equal(result.snapshotText, snapshotText);
-});
-
-test("querySnapshotText auto mode narrows matches with knowledge cues", () => {
-  const result = querySnapshotText({
-    snapshotText,
-    mode: "auto",
+    mode: "search",
+    text: "Customer messages",
     knowledgeHits: [
       {
         guide: "Check the conversation list first.",
@@ -160,6 +135,7 @@ test("querySnapshotText auto mode narrows matches with knowledge cues", () => {
   });
 
   assertSearchResult(result);
-  assert.equal(result.matches.length, 2);
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].uid, "1_1");
   assert.equal(result.knowledgeHits.length, 1);
 });

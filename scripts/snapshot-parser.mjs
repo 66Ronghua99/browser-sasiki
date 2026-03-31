@@ -67,7 +67,7 @@ function parseQuotedElementLine(line, lineNumber, raw) {
     raw,
     role,
     text,
-    uid: null,
+    uid: ref,
     ref,
   };
 }

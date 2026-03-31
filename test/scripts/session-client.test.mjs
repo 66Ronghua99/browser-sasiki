@@ -90,7 +90,8 @@ const querySnapshotRequest = {
   method: "querySnapshot",
   params: {
     snapshotRef: "snapshot_demo",
-    mode: "auto",
+    mode: "search",
+    uid: "1_1",
   },
 };
 
@@ -146,11 +147,11 @@ test("session rpc contract freezes the HTTP daemon method names and metadata key
     health: [],
     capture: ["tabRef", "pageId"],
     navigate: ["tabRef", "url"],
-    click: ["tabRef", "uid", "ref"],
-    type: ["tabRef", "uid", "ref", "text", "submit", "slowly"],
+    click: ["tabRef", "uid"],
+    type: ["tabRef", "uid", "text", "submit", "slowly"],
     press: ["tabRef", "key"],
     selectTab: ["tabRef", "pageId"],
-    querySnapshot: ["tabRef", "snapshotRef", "mode", "query", "role", "uid", "ref"],
+    querySnapshot: ["tabRef", "snapshotRef", "mode", "query", "role", "uid"],
     recordKnowledge: ["tabRef", "snapshotRef", "page", "guide", "keywords", "rationale", "knowledgeRef"],
     shutdown: [],
   });
@@ -215,6 +216,41 @@ test("session rpc requests and results keep the HTTP contract explicit", () => {
   );
 
   assert.doesNotThrow(() => assertSessionRpcRequest(querySnapshotRequest));
+  assert.throws(
+    () =>
+      assertSessionRpcRequest({
+        ...querySnapshotRequest,
+        params: {
+          snapshotRef: "snapshot_demo",
+          mode: "full",
+          query: "Submit",
+        },
+      }),
+    /full.*query|full.*selector/i,
+  );
+  assert.throws(
+    () =>
+      assertSessionRpcRequest({
+        ...querySnapshotRequest,
+        params: {
+          snapshotRef: "snapshot_demo",
+          mode: "search",
+        },
+      }),
+    /search.*query|search.*role|search.*uid/i,
+  );
+  assert.throws(
+    () =>
+      assertSessionRpcRequest({
+        ...querySnapshotRequest,
+        params: {
+          snapshotRef: "snapshot_demo",
+          mode: "search",
+          ref: "legacy_ref",
+        },
+      }),
+    /unknown field ref|allowed fields/i,
+  );
   assert.doesNotThrow(() => assertSessionRpcRequest(recordKnowledgeRequest));
   assert.doesNotThrow(() => assertSessionRpcRequest(recordKnowledgeByTabRefRequest));
   assert.doesNotThrow(() => assertSessionRpcRequest(recordKnowledgeBySnapshotRefRequest));

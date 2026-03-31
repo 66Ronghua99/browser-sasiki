@@ -2,11 +2,11 @@ const ACTIVE_ENDPOINT_DEFINITIONS = [
   { name: "health", method: "GET", path: "/health", fields: [] },
   { name: "capture", method: "POST", path: "/capture", fields: ["tabRef", "pageId"] },
   { name: "navigate", method: "POST", path: "/navigate", fields: ["tabRef", "url"] },
-  { name: "click", method: "POST", path: "/click", fields: ["tabRef", "uid", "ref"] },
-  { name: "type", method: "POST", path: "/type", fields: ["tabRef", "uid", "ref", "text", "submit", "slowly"] },
+  { name: "click", method: "POST", path: "/click", fields: ["tabRef", "uid"] },
+  { name: "type", method: "POST", path: "/type", fields: ["tabRef", "uid", "text", "submit", "slowly"] },
   { name: "press", method: "POST", path: "/press", fields: ["tabRef", "key"] },
   { name: "selectTab", method: "POST", path: "/select-tab", fields: ["tabRef", "pageId"] },
-  { name: "querySnapshot", method: "POST", path: "/query-snapshot", fields: ["tabRef", "snapshotRef", "mode", "query", "role", "uid", "ref"] },
+  { name: "querySnapshot", method: "POST", path: "/query-snapshot", fields: ["tabRef", "snapshotRef", "mode", "query", "role", "uid"] },
   { name: "recordKnowledge", method: "POST", path: "/record-knowledge", fields: ["tabRef", "snapshotRef", "page", "guide", "keywords", "rationale"] },
   { name: "shutdown", method: "POST", path: "/shutdown", fields: [] },
 ];
@@ -80,7 +80,7 @@ export function assertHttpRequestBody(endpoint, body) {
       if (endpoint === "navigate") {
         assertNonEmptyString(body.url, "body.url");
       } else if (endpoint === "click") {
-        assertSelector(body, "body");
+        assertUid(body, "body");
       } else if (endpoint === "press") {
         assertNonEmptyString(body.key, "body.key");
       } else {
@@ -89,7 +89,7 @@ export function assertHttpRequestBody(endpoint, body) {
       return;
     case "type":
       assertNonEmptyString(body.tabRef, "body.tabRef");
-      assertSelector(body, "body");
+      assertUid(body, "body");
       assertNonEmptyString(body.text, "body.text");
       if (body.submit !== undefined) {
         assertBoolean(body.submit, "body.submit");
@@ -99,8 +99,8 @@ export function assertHttpRequestBody(endpoint, body) {
       }
       return;
     case "querySnapshot":
-      if (body.tabRef === undefined && body.snapshotRef === undefined) {
-        throw new TypeError("querySnapshot body must include tabRef or snapshotRef");
+      if ((body.tabRef === undefined) === (body.snapshotRef === undefined)) {
+        throw new TypeError("querySnapshot body must include exactly one of tabRef or snapshotRef");
       }
       if (body.tabRef !== undefined) {
         assertNonEmptyString(body.tabRef, "body.tabRef");
@@ -108,8 +108,11 @@ export function assertHttpRequestBody(endpoint, body) {
       if (body.snapshotRef !== undefined) {
         assertNonEmptyString(body.snapshotRef, "body.snapshotRef");
       }
-      if (body.mode !== undefined && !["search", "auto", "full"].includes(body.mode)) {
-        throw new TypeError('body.mode must be one of "search", "auto", or "full"');
+      if (body.mode === undefined) {
+        throw new TypeError('body.mode must be one of "search" or "full"');
+      }
+      if (!["search", "full"].includes(body.mode)) {
+        throw new TypeError('body.mode must be one of "search" or "full"');
       }
       if (body.query !== undefined) {
         assertNonEmptyString(body.query, "body.query");
@@ -120,8 +123,11 @@ export function assertHttpRequestBody(endpoint, body) {
       if (body.uid !== undefined) {
         assertNonEmptyString(body.uid, "body.uid");
       }
-      if (body.ref !== undefined) {
-        assertNonEmptyString(body.ref, "body.ref");
+      if (body.mode === "full" && (body.query !== undefined || body.role !== undefined || body.uid !== undefined)) {
+        throw new TypeError("querySnapshot full mode does not accept selector fields such as query, role, or uid");
+      }
+      if (body.mode === "search" && body.query === undefined && body.role === undefined && body.uid === undefined) {
+        throw new TypeError("querySnapshot search mode requires at least one selector: query, role, or uid");
       }
       return;
     case "recordKnowledge":
@@ -163,16 +169,11 @@ function assertAllowedFields(endpoint, body) {
   }
 }
 
-function assertSelector(body, label) {
-  if (body.uid === undefined && body.ref === undefined) {
-    throw new TypeError(`${label} must include uid or ref`);
+function assertUid(body, label) {
+  if (body.uid === undefined) {
+    throw new TypeError(`${label} must include uid`);
   }
-  if (body.uid !== undefined) {
-    assertNonEmptyString(body.uid, `${label}.uid`);
-  }
-  if (body.ref !== undefined) {
-    assertNonEmptyString(body.ref, `${label}.ref`);
-  }
+  assertNonEmptyString(body.uid, `${label}.uid`);
 }
 
 function assertPlainObject(value, label) {

@@ -6,7 +6,7 @@ function normalizeText(value) {
 }
 
 function elementTokens(element) {
-  return [element.role ?? "", element.text, element.uid ?? "", element.ref ?? "", element.raw]
+  return [element.role ?? "", element.text, element.uid ?? "", element.raw]
     .join(" ")
     .toLowerCase();
 }
@@ -16,7 +16,7 @@ function buildKnowledgeTerms(knowledgeHits) {
 }
 
 function matchesCriteria(element, input) {
-  const expectedUid = input.uid ?? input.ref;
+  const expectedUid = input.uid;
   if (expectedUid && element.uid !== expectedUid && element.ref !== expectedUid) {
     return false;
   }
@@ -45,7 +45,6 @@ function toMatch(element) {
     role: element.role,
     text: element.text,
     uid: element.uid,
-    ref: element.ref,
   };
 }
 
@@ -65,38 +64,18 @@ export function querySnapshotText(input) {
   const page = defaultPageFromSnapshot(input.snapshotText, input.page);
   const knowledgeHits = input.knowledgeHits ?? [];
 
-  if (input.mode === "full" || (input.mode === "auto" && knowledgeHits.length === 0)) {
+  if (input.mode === "full") {
     return {
       mode: "full",
       page,
       snapshotText: input.snapshotText,
       knowledgeHits,
-      summary:
-        input.mode === "auto" && knowledgeHits.length === 0
-          ? "No page knowledge was available; returning the full snapshot content."
-          : "Returning the full snapshot content.",
+      summary: "Returning the full snapshot content.",
     };
   }
 
   const explicitMatches = parsedSnapshot.elements.filter((element) => matchesCriteria(element, input));
-  const matches =
-    input.mode === "auto" &&
-    input.text === undefined &&
-    input.role === undefined &&
-    input.uid === undefined &&
-    input.ref === undefined
-      ? parsedSnapshot.elements.filter((element) => matchesKnowledge(element, knowledgeHits))
-      : explicitMatches;
-
-  if (input.mode === "auto" && knowledgeHits.length > 0 && matches.length === 0) {
-    return {
-      mode: "full",
-      page,
-      snapshotText: input.snapshotText,
-      knowledgeHits,
-      summary: "Knowledge cues did not match the snapshot; returning the full snapshot content.",
-    };
-  }
+  const matches = explicitMatches;
 
   return {
     mode: "search",

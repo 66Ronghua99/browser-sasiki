@@ -166,14 +166,24 @@ test("SKILL front door teaches curl-based http usage, automatic knowledge hits, 
   const skillPath = fileURLToPath(new URL("../../SKILL.md", import.meta.url));
   const content = await readFile(skillPath, "utf8");
 
+  assert.match(content, /## Before You Start/i);
+  assert.match(content, /## Decide The Next Call/i);
+  assert.match(content, /## Parameter Guide/i);
+  assert.match(content, /## Common Failure Mode/i);
   assert.match(content, /curl -s .*\/health/i);
   assert.match(content, /curl -s -X POST .*\/capture/i);
   assert.match(content, /node (skill\/)?scripts\/browser-sessiond\.mjs/i);
   assert.match(content, /knowledgeHits auto-load/i);
-  assert.match(content, /accept `uid`.*accept `ref`|accept `ref`.*accept `uid`/i);
+  assert.match(content, /`tabRef`.*live|live.*`tabRef`/i);
+  assert.match(content, /`snapshotRef`.*exact|exact.*`snapshotRef`/i);
+  assert.match(content, /`search`.*`full`|`full`.*`search`/i);
+  assert.match(content, /`uid` is the only/i);
+  assert.match(content, /Do not send `ref`/i);
   assert.match(content, /there is no `\/browser-run-code` endpoint/i);
   assert.match(content, /must successfully call `record-knowledge` before the final answer/i);
   assert.doesNotMatch(content, /read-knowledge/i);
+  assert.doesNotMatch(content, /`auto`/i);
+  assert.doesNotMatch(content, /accept .*`ref`|`ref` as a/i);
   assert.doesNotMatch(content, /skill\/server\//i);
   assert.doesNotMatch(content, /dist\/scripts/i);
 });
