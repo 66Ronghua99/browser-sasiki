@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 
+import { createConnectedDevtoolsBrowserClient } from "./devtools-browser-client.mjs";
 import { KnowledgeStore } from "./knowledge-store.mjs";
-import { McpBrowserClient } from "./mcp-browser-client.mjs";
 import { defaultRuntimeRoots } from "./paths.mjs";
 import { pageIdentityFromSnapshotText } from "./page-identity.mjs";
 import { SnapshotStore } from "./snapshot-store.mjs";
+import { WorkspaceReconciler } from "./workspace-reconciler.mjs";
+import { WorkspaceStore } from "./workspace-store.mjs";
 import { TabBindingStore } from "./tab-binding-store.mjs";
 
 const DEFAULT_SNAPSHOT_TTL_MS = 12 * 60 * 60 * 1000;
@@ -23,9 +24,7 @@ export class DefaultBrowserRuntime {
   }
 
   async callBrowserTool(name, args) {
-    const result = await this.client.callBrowserTool(name, args);
-    assertBrowserToolSucceeded(name, result);
-    return result;
+    return this.client.callBrowserTool(name, args);
   }
 
   async readActiveTabIndex() {
@@ -38,92 +37,14 @@ export class DefaultBrowserRuntime {
   }
 
   async openWorkspaceTab() {
-    const pageListText = await this.client.newPage(DEFAULT_WORKSPACE_TAB_URL);
-    const activeTab = parseTabInventory(pageListText).find((tab) => tab.active);
-    if (activeTab) {
-      return {
-        pageId: activeTab.index,
-        pageListText,
-      };
-    }
+    const page = await this.client.openWorkspaceTab(DEFAULT_WORKSPACE_TAB_URL, {
+      bringToFront: false,
+    });
+    const pageListText = await this.client.listPages();
     return {
-      pageId: await this.readActiveTabIndex(),
+      pageId: page.pageId,
       pageListText,
     };
-  }
-}
-
-export class InternalStdioToolClient {
-  constructor(launchOptions) {
-    this.launchOptions = launchOptions;
-    this.processStarted = false;
-    this.session = null;
-    this.transport = null;
-  }
-
-  async connect() {
-    if (this.processStarted) {
-      return;
-    }
-
-    const launchOptions = this.launchOptions
-      ?? resolveBrowserMcpLaunchOptions(process.env);
-    const clientModule = await import("@modelcontextprotocol/sdk/client/index.js");
-    const stdioModule = await import("@modelcontextprotocol/sdk/client/stdio.js");
-    const transport = new stdioModule.StdioClientTransport({
-      command: launchOptions.command,
-      args: launchOptions.args,
-      env: process.env,
-      stderr: "pipe",
-    });
-    const session = new clientModule.Client(
-      { name: "sasiki-browser-skill", version: "0.1.0" },
-      { capabilities: { tools: {} } },
-    );
-
-    await session.connect(transport);
-    this.transport = transport;
-    this.session = session;
-    this.processStarted = true;
-  }
-
-  async disconnect() {
-    const session = this.session;
-    const transport = this.transport;
-
-    if (session?.close) {
-      await session.close();
-    }
-    if (transport?.close) {
-      await transport.close();
-    }
-
-    this.session = null;
-    this.transport = null;
-    this.processStarted = false;
-  }
-
-  async listTools() {
-    const session = this.requireSession();
-    const result = await session.listTools();
-    const tools = Array.isArray(result?.tools) ? result.tools : [];
-    return tools.map((item) => ({
-      name: String(item?.name ?? ""),
-      description: typeof item?.description === "string" ? item.description : undefined,
-      inputSchema: toRecord(item?.inputSchema),
-    }));
-  }
-
-  async callTool(name, args) {
-    const session = this.requireSession();
-    return callToolWithLegacyFallback(session, name, args);
-  }
-
-  requireSession() {
-    if (!this.session) {
-      throw new Error("MCP session is not connected");
-    }
-    return this.session;
   }
 }
 
@@ -140,9 +61,56 @@ export async function runWithBrowserActionDeps(deps, run) {
   }
 }
 
+export async function openWorkspaceFlow(args, deps) {
+  await deps.snapshots.cleanupExpired();
+
+  const providedTabRef = optionalNonEmptyString(args.tabRef, "tabRef");
+  const captureTarget = await resolveCaptureTarget(args, deps, providedTabRef);
+  const rawSnapshotText = await deps.browser.captureSnapshot();
+  const snapshotText = normalizeCapturedSnapshot(captureTarget.pageListText, rawSnapshotText, captureTarget.pageId);
+  const { snapshotPath } = await deps.snapshots.write(snapshotText);
+  const page = pageIdentityFromSnapshotText(snapshotText);
+  const tabRef = providedTabRef ?? mintTabRef();
+  const workspaceState = resolveWorkspaceState(deps);
+  const workspaceStateResult = await resolveWorkspaceReconciler(workspaceState).reconcileWorkspace({
+    workspaceRef: tabRef,
+    browserTabIndex: captureTarget.pageId,
+    page,
+    snapshotPath,
+  });
+
+  await deps.tabBindings.write({
+    tabRef,
+    browserTabIndex: workspaceStateResult.workspace.browserTabIndex,
+    snapshotPath,
+    page,
+  });
+
+  const knowledgeHits = await readKnowledgeHits(deps, page.origin, page.normalizedPath);
+
+  return {
+    ok: true,
+    tabRef,
+    workspaceRef: tabRef,
+    page,
+    tabs: parseTabInventory(snapshotText),
+    snapshotPath,
+    knowledgeHits,
+    summary: captureTarget.createdWorkspaceTab
+      ? `Captured a fresh snapshot and bound a new workspace tab to ${tabRef}.`
+      : captureTarget.reusedBinding
+        ? `Refreshed ${tabRef} with a fresh snapshot.`
+        : `Captured a fresh snapshot and bound browser tab ${captureTarget.pageId} to ${tabRef}.`,
+  };
+}
+
 export async function runBrowserAction(input, deps) {
+  return runWorkspaceAction(input, deps);
+}
+
+export async function runWorkspaceAction(input, deps) {
   const tabRef = requireNonEmptyString(input.tabRef, "tabRef");
-  const binding = await deps.tabBindings.read(tabRef);
+  const binding = await readWorkspaceBinding(deps.tabBindings, tabRef);
 
   if (input.preselectBoundTab !== false) {
     await selectCapturedPage(deps.browser, binding.browserTabIndex);
@@ -167,12 +135,21 @@ export async function runBrowserAction(input, deps) {
     page,
   });
 
+  const workspaceState = resolveWorkspaceState(deps);
+  const workspaceStateResult = await resolveWorkspaceReconciler(workspaceState).reconcileWorkspace({
+    workspaceRef: tabRef,
+    browserTabIndex,
+    page,
+    snapshotPath,
+  });
+
   const knowledgeHits = await readKnowledgeHits(deps, page.origin, page.normalizedPath);
 
   return {
     ok: true,
     action: input.action,
     tabRef,
+    workspaceRef: tabRef,
     page,
     snapshotPath,
     knowledgeHits,
@@ -181,38 +158,7 @@ export async function runBrowserAction(input, deps) {
 }
 
 export async function runCaptureFlow(args, deps) {
-  await deps.snapshots.cleanupExpired();
-
-  const providedTabRef = optionalNonEmptyString(args.tabRef, "tabRef");
-  const captureTarget = await resolveCaptureTarget(args, deps, providedTabRef);
-  const rawSnapshotText = await deps.browser.captureSnapshot();
-  const snapshotText = normalizeCapturedSnapshot(captureTarget.pageListText, rawSnapshotText, captureTarget.pageId);
-  const { snapshotPath } = await deps.snapshots.write(snapshotText);
-  const page = pageIdentityFromSnapshotText(snapshotText);
-  const tabRef = providedTabRef ?? mintTabRef();
-
-  await deps.tabBindings.write({
-    tabRef,
-    browserTabIndex: captureTarget.pageId,
-    snapshotPath,
-    page,
-  });
-
-  const knowledgeHits = await readKnowledgeHits(deps, page.origin, page.normalizedPath);
-
-  return {
-    ok: true,
-    tabRef,
-    page,
-    tabs: parseTabInventory(snapshotText),
-    snapshotPath,
-    knowledgeHits,
-    summary: captureTarget.createdWorkspaceTab
-      ? `Captured a fresh snapshot and bound a new workspace tab to ${tabRef}.`
-      : captureTarget.reusedBinding
-        ? `Refreshed ${tabRef} with a fresh snapshot.`
-        : `Captured a fresh snapshot and bound browser tab ${captureTarget.pageId} to ${tabRef}.`,
-  };
+  return openWorkspaceFlow(args, deps);
 }
 
 export function parseCliIntegerArg(value, label) {
@@ -240,17 +186,6 @@ export function parseCliBooleanArg(value) {
     return false;
   }
   throw new Error(`Expected boolean flag value, received ${value}`);
-}
-
-export async function callToolWithLegacyFallback(session, name, args) {
-  try {
-    return toRecord(await session.callTool({ name, arguments: args }));
-  } catch (error) {
-    if (!shouldRetryLegacyCallTool(error)) {
-      throw error;
-    }
-    return toRecord(await session.callTool(name, args));
-  }
 }
 
 export function readCliStringArg(args, key) {
@@ -313,101 +248,41 @@ export function requireCliIntegerArg(args, key, label) {
   return parseCliIntegerArg(value, label);
 }
 
-export function resolveBrowserMcpLaunchOptions(
-  env,
-  options,
-) {
-  const explicitArgs = env.SASIKI_BROWSER_MCP_ARGS;
-  if (explicitArgs && explicitArgs.trim().length > 0) {
-    return {
-      command: env.SASIKI_BROWSER_MCP_COMMAND ?? "npx",
-      args: parseCommandArgs(explicitArgs),
-    };
-  }
-
-  const explicitBrowserUrl = env.SASIKI_BROWSER_URL?.trim();
-  if (explicitBrowserUrl) {
-    return {
-      command: env.SASIKI_BROWSER_MCP_COMMAND ?? "npx",
-      args: ["chrome-devtools-mcp@latest", "--browserUrl", explicitBrowserUrl],
-    };
-  }
-
-  const detectedBrowserUrl = detectRunningChromeBrowserUrl(options?.runningChromeCommands);
-  if (detectedBrowserUrl) {
-    return {
-      command: env.SASIKI_BROWSER_MCP_COMMAND ?? "npx",
-      args: ["chrome-devtools-mcp@latest", "--browserUrl", detectedBrowserUrl],
-    };
-  }
-
-  return {
-    command: env.SASIKI_BROWSER_MCP_COMMAND ?? "npx",
-    args: ["chrome-devtools-mcp@latest", "--autoConnect"],
-  };
-}
-
-function parseCommandArgs(value) {
-  return value
-    .split(/\s+/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-}
-
-function detectRunningChromeBrowserUrl(runningChromeCommands) {
-  const commands = runningChromeCommands ?? readRunningChromeCommands();
-  const preferredCommand = commands.find((command) => !/\s--type=/i.test(command));
-  return parseBrowserUrlFromChromeCommand(preferredCommand)
-    ?? commands.map((command) => parseBrowserUrlFromChromeCommand(command)).find((url) => url !== undefined);
-}
-
-function readRunningChromeCommands() {
-  try {
-    const output = execFileSync("ps", ["axo", "command"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    return output
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0 && /Chrome|Chromium/i.test(line));
-  } catch {
-    return [];
-  }
-}
-
-function parseBrowserUrlFromChromeCommand(command) {
-  if (!command || !/--remote-debugging-port=\d+/i.test(command)) {
-    return undefined;
-  }
-
-  const portMatch = command.match(/--remote-debugging-port=(\d+)/i);
-  if (!portMatch) {
-    return undefined;
-  }
-
-  const addressMatch = command.match(/--remote-debugging-address=([^\s]+)/i);
-  const address = addressMatch?.[1]?.trim() || "127.0.0.1";
-  return `http://${address}:${portMatch[1]}`;
-}
-
 async function createDefaultBrowserActionDeps() {
   const roots = defaultRuntimeRoots();
-  const toolClient = new InternalStdioToolClient();
-  await toolClient.connect();
-  const browser = new DefaultBrowserRuntime(new McpBrowserClient(toolClient));
+  const connected = await createConnectedDevtoolsBrowserClient({
+    env: process.env,
+  });
+  const browser = new DefaultBrowserRuntime(connected.client);
 
   return {
     browser,
     tabBindings: new TabBindingStore(path.join(roots.tempRoot, "tab-state")),
+    workspaceState: new WorkspaceStore(path.join(roots.tempRoot, "workspace-state")),
     snapshots: new SnapshotStore(path.join(roots.tempRoot, "snapshots"), {
       ttlMs: DEFAULT_SNAPSHOT_TTL_MS,
     }),
     knowledge: new KnowledgeStore(roots.knowledgeFile),
     dispose: async () => {
-      await toolClient.disconnect();
+      await connected.close();
     },
   };
+}
+
+function resolveWorkspaceState(deps) {
+  if (deps.workspaceState) {
+    return deps.workspaceState;
+  }
+
+  if (!deps.tabBindings || typeof deps.tabBindings.rootDir !== "string") {
+    throw new TypeError("workspaceState requires either deps.workspaceState or deps.tabBindings.rootDir");
+  }
+
+  return new WorkspaceStore(path.join(path.dirname(deps.tabBindings.rootDir), "workspace-state"));
+}
+
+function resolveWorkspaceReconciler(workspaceState) {
+  return new WorkspaceReconciler(workspaceState);
 }
 
 async function resolveCaptureTarget(
@@ -476,6 +351,17 @@ async function readKnowledgeHits(deps, origin, normalizedPath) {
   }));
 }
 
+async function readWorkspaceBinding(tabBindings, workspaceRef) {
+  try {
+    return await tabBindings.read(workspaceRef);
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      throw new Error(`Workspace ${workspaceRef} is not available; create a new workspace with POST /workspaces.`);
+    }
+    throw error;
+  }
+}
+
 function mintTabRef() {
   return `tab_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
 }
@@ -504,6 +390,10 @@ function requireNonEmptyString(value, label) {
   return value;
 }
 
+function isMissingFileError(error) {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
 function optionalNonEmptyString(value, label) {
   if (value === undefined) {
     return undefined;
@@ -511,27 +401,17 @@ function optionalNonEmptyString(value, label) {
   return requireNonEmptyString(value, label);
 }
 
-function assertBrowserToolSucceeded(name, result) {
-  const text = readToolText(result);
-  if (result.isError === true) {
-    throw new Error(`${name} returned an MCP error result: ${text ?? JSON.stringify(result)}`);
-  }
-  if (text && /^###\s*Error\b/im.test(text)) {
-    throw new Error(`${name} returned an error payload: ${text}`);
-  }
-}
-
 function isMissingCapturedPageError(error) {
   if (!(error instanceof Error)) {
     return false;
   }
-  return /select_page/i.test(error.message) && /no page found/i.test(error.message);
+  return /no page found/i.test(error.message) || /selected page has been closed/i.test(error.message);
 }
 
 async function selectCapturedPage(browser, pageId) {
   const result = await browser.callBrowserTool("select_page", {
     pageId,
-    bringToFront: true,
+    bringToFront: false,
   });
   const text = readToolText(result);
   if (!text) {
@@ -604,26 +484,6 @@ function readToolText(result) {
     }
   }
   return null;
-}
-
-function toRecord(value) {
-  if (value && typeof value === "object") {
-    return value;
-  }
-  return {};
-}
-
-function shouldRetryLegacyCallTool(error) {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const message = error.message.trim();
-  return (
-    /expects?\s+(?:a\s+)?tool name(?:\s+and\s+arguments)?/i.test(message) ||
-    /expected\s+(?:a\s+)?(?:tool\s+name|string).*(?:arguments|object)/i.test(message) ||
-    (error.name === "TypeError" && /\bcalltool\b/i.test(message) && /\b(name|arguments|object|string)\b/i.test(message))
-  );
 }
 
 export function parseTabInventory(snapshotText) {

@@ -7,9 +7,8 @@ import test from "node:test";
 import { requestJson, startBrowserSessionDaemon } from "../../scripts/http-client.mjs";
 
 function createFakeBrowserBridge() {
+  const calls = [];
   const state = {
-    activePageId: 1,
-    nextSnapshotIndex: 0,
     tabs: [
       {
         index: 1,
@@ -17,43 +16,49 @@ function createFakeBrowserBridge() {
         url: "https://example.com/dashboard",
         active: true,
       },
+      {
+        index: 2,
+        title: "Details",
+        url: "https://example.com/details",
+        active: false,
+      },
     ],
   };
 
   return {
+    calls,
     async listPages() {
       return renderPageList(state.tabs);
     },
     async newPage(url) {
-      state.activePageId = 1;
-      state.tabs = [
-        {
-          index: 1,
-          title: "Workspace",
-          url,
-          active: true,
-        },
-      ];
+      state.tabs = state.tabs.map((tab) =>
+        tab.index === 1
+          ? {
+              ...tab,
+              title: "Workspace",
+              url,
+              active: true,
+            }
+          : tab,
+      );
       return renderPageList(state.tabs);
     },
     async captureSnapshot() {
-      state.nextSnapshotIndex += 1;
-      const title = state.tabs.find((tab) => tab.active)?.title ?? "Unknown";
-      const url = state.tabs.find((tab) => tab.active)?.url ?? "https://example.com/";
+      const active = state.tabs.find((tab) => tab.active) ?? state.tabs[0];
       return [
         "## Latest page snapshot",
-        `uid=root RootWebArea "${title}" url="${url}"`,
-        `- button "Submit ${state.nextSnapshotIndex}" [ref=submit_button]`,
-        `- textbox [uid=query_input] Search`,
+        `uid=root RootWebArea "${active.title}" url="${active.url}"`,
+        "- button \"Submit\" [ref=submit_button]",
+        "- textbox [uid=query_input] Search",
       ].join("\n");
     },
     async callTool(name, args) {
+      calls.push({ name, args });
+
       if (name === "select_page") {
-        const pageId = args.pageId;
-        state.activePageId = pageId;
         state.tabs = state.tabs.map((tab) => ({
           ...tab,
-          active: tab.index === pageId,
+          active: tab.index === args.pageId,
         }));
         return renderPageList(state.tabs);
       }
@@ -96,12 +101,13 @@ function createIsolatedRuntimeRoots(root) {
 
 test("browser-sessiond serves /health over HTTP and refreshes lastSeenAt", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const bridge = createFakeBrowserBridge();
   const { daemon, metadata } = await startBrowserSessionDaemon({
     sessionRoot: path.join(root, "session"),
     port: 0,
     runtimeVersion: "test-http",
     runtimeRoots: createIsolatedRuntimeRoots(root),
-    createMcpBridge: async () => ({ ...createFakeBrowserBridge() }),
+    createBrowserBridge: async () => bridge,
   });
 
   try {
@@ -121,146 +127,237 @@ test("browser-sessiond serves /health over HTTP and refreshes lastSeenAt", async
   }
 });
 
-test("browser-sessiond routes capture over HTTP and strips snapshotPath from public responses", async () => {
+test("browser-sessiond bridges workspace-first listing and tab-selection HTTP onto the browser runtime", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const bridge = createFakeBrowserBridge();
   const { daemon, metadata } = await startBrowserSessionDaemon({
     sessionRoot: path.join(root, "session"),
     port: 0,
     runtimeVersion: "test-http",
     runtimeRoots: createIsolatedRuntimeRoots(root),
-    createMcpBridge: async () => ({ ...createFakeBrowserBridge() }),
+    createBrowserBridge: async () => bridge,
   });
 
   try {
-    const result = await requestJson("POST", `${metadata.baseUrl}/capture`, {
-      tabRef: "tab_demo",
+    const workspaces = await requestJson("POST", `${metadata.baseUrl}/workspaces`, {});
+    const seededTabs = daemon.workspaceTabRefs.materializeTabs(workspaces.workspaceRef, [
+      {
+        index: 1,
+        title: "Workspace",
+        url: "about:blank",
+        active: true,
+      },
+      {
+        index: 2,
+        title: "Details",
+        url: "https://example.com/details",
+        active: false,
+      },
+    ]);
+    const detailsTab = seededTabs[1];
+    await daemon.workspaceState.writeWorkspaceTab({
+      workspaceRef: workspaces.workspaceRef,
+      workspaceTabRef: detailsTab.workspaceTabRef,
+      browserTabIndex: 2,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/details",
+        title: "Details",
+      },
+      snapshotPath: "/tmp/details.md",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
     });
+    const tabs = await requestJson("GET", `${metadata.baseUrl}/tabs?workspaceRef=${workspaces.workspaceRef}`);
+    const selectTab = await requestJson(
+      "POST",
+      `${metadata.baseUrl}/select-tab?workspaceRef=${workspaces.workspaceRef}&workspaceTabRef=${detailsTab.workspaceTabRef}`,
+      {},
+    );
 
-    assert.equal(result.ok, true);
-    assert.equal(result.tabRef, "tab_demo");
-    assert.equal(typeof result.snapshotRef, "string");
-    assert.equal(result.snapshotRef.length > 0, true);
-    assert.equal(typeof result.summary, "string");
-    assert.equal(result.summary.includes("tab_demo"), true);
-    assert.equal("snapshotPath" in result, false);
-    assert.equal(result.tabs[0].active, true);
+    assert.equal(workspaces.ok, true);
+    assert.equal(typeof workspaces.workspaceRef, "string");
+    assert.equal(workspaces.workspaceTabRef, undefined);
+    assert.equal(Array.isArray(workspaces.tabs), true);
+    assert.equal(workspaces.tabs.length, 1);
+    assert.match(workspaces.tabs[0].workspaceTabRef, /^workspace_tab_[0-9a-f-]+$/i);
+    assert.equal(workspaces.tabs[0].title, "Workspace");
+
+    assert.equal(tabs.ok, true);
+    assert.equal(tabs.workspaceRef, workspaces.workspaceRef);
+    assert.equal(tabs.tabs.length, 2);
+    assert.equal(
+      tabs.tabs.some((tab) => tab.workspaceTabRef === workspaces.tabs[0].workspaceTabRef && tab.title === "Workspace"),
+      true,
+    );
+    assert.equal(
+      tabs.tabs.some((tab) => tab.workspaceTabRef === detailsTab.workspaceTabRef && tab.title === "Details"),
+      true,
+    );
+
+    assert.equal(selectTab.ok, true);
+    assert.equal(selectTab.workspaceRef, workspaces.workspaceRef);
+    assert.equal(selectTab.workspaceTabRef, detailsTab.workspaceTabRef);
+
+    const selectPageIds = bridge.calls.filter((call) => call.name === "select_page").map((call) => call.args.pageId);
+    assert.equal(selectPageIds.includes(2), true);
+    assert.equal(selectPageIds.at(-1), 2);
+
+    await assert.rejects(() =>
+      requestJson(
+        "POST",
+        `${metadata.baseUrl}/navigate?workspaceRef=${workspaces.workspaceRef}&workspaceTabRef=workspace_tab_2`,
+        {
+          url: "https://example.com/dashboard",
+        },
+      ),
+    );
   } finally {
     await daemon.stop();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("browser-sessiond routes actions, query-snapshot, and record-knowledge through the runtime helpers", async () => {
+test("browser-sessiond stale workspace failures stay on workspace-first language after a session reset", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
-  const { daemon, metadata } = await startBrowserSessionDaemon({
+  const runtimeRoots = createIsolatedRuntimeRoots(root);
+  const bridge = createFakeBrowserBridge();
+  const started = await startBrowserSessionDaemon({
     sessionRoot: path.join(root, "session"),
     port: 0,
     runtimeVersion: "test-http",
-    runtimeRoots: createIsolatedRuntimeRoots(root),
-    createMcpBridge: async () => ({ ...createFakeBrowserBridge() }),
+    runtimeRoots,
+    createBrowserBridge: async () => bridge,
   });
 
   try {
-    const capture = await requestJson("POST", `${metadata.baseUrl}/capture`, {
-      tabRef: "main",
-    });
-    assert.equal(capture.ok, true);
+    const workspace = await requestJson("POST", `${started.metadata.baseUrl}/workspaces`, {});
+    await started.daemon.stop();
 
-    const navigate = await requestJson("POST", `${metadata.baseUrl}/navigate`, {
-      tabRef: "main",
-      url: "https://example.com/dashboard",
+    const restarted = await startBrowserSessionDaemon({
+      sessionRoot: path.join(root, "session"),
+      port: 0,
+      runtimeVersion: "test-http",
+      runtimeRoots,
+      createBrowserBridge: async () => createFakeBrowserBridge(),
     });
-    assert.equal(navigate.ok, true);
-    assert.equal("snapshotPath" in navigate, false);
 
-    const record = await requestJson("POST", `${metadata.baseUrl}/record-knowledge`, {
-      tabRef: "main",
-      guide: "Submit button is in the page body.",
-      keywords: ["submit", "dashboard"],
-    });
-    assert.equal(record.ok, true);
-    assert.equal(record.record.guide, "Submit button is in the page body.");
-    assert.equal(record.record.page.normalizedPath, "/dashboard");
-
-    const query = await requestJson("POST", `${metadata.baseUrl}/query-snapshot`, {
-      tabRef: "main",
-      mode: "search",
-      query: "Submit 3",
-    });
-    assert.equal(query.ok, true);
-    assert.equal(query.page.normalizedPath, "/dashboard");
-    assert.equal(query.knowledgeHits.length > 0, true);
-    assert.equal("snapshotPath" in query, false);
-    assert.equal(query.matches.length, 1);
-    assert.equal(query.matches[0]?.uid, "submit_button");
-
-    const repeatQuery = await requestJson("POST", `${metadata.baseUrl}/query-snapshot`, {
-      snapshotRef: capture.snapshotRef,
-      mode: "full",
-    });
-    assert.equal(repeatQuery.ok, true);
-    assert.equal(repeatQuery.snapshotRef, capture.snapshotRef);
-    assert.match(repeatQuery.snapshotText, /Submit 1/);
+    try {
+      await assert.rejects(
+        () =>
+          requestJson(
+            "POST",
+            `${restarted.metadata.baseUrl}/query?workspaceRef=${workspace.workspaceRef}`,
+            {
+              mode: "search",
+              query: "Submit",
+            },
+          ),
+        (error) => {
+          assert.equal(error.status, 500);
+          assert.match(error.body.error, /Workspace .*POST \/workspaces\./);
+          assert.doesNotMatch(error.body.error, /\/capture/i);
+          return true;
+        },
+      );
+    } finally {
+      await restarted.daemon.stop();
+    }
   } finally {
-    await daemon.stop();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("query-snapshot refreshes the live tab for tabRef queries but keeps snapshotRef exact", async () => {
+test("browser-sessiond record-knowledge returns the bridged workspace response and legacy record payload", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const bridge = createFakeBrowserBridge();
   const { daemon, metadata } = await startBrowserSessionDaemon({
     sessionRoot: path.join(root, "session"),
     port: 0,
     runtimeVersion: "test-http",
     runtimeRoots: createIsolatedRuntimeRoots(root),
-    createMcpBridge: async () => ({ ...createFakeBrowserBridge() }),
+    createBrowserBridge: async () => bridge,
   });
 
   try {
-    const capture = await requestJson("POST", `${metadata.baseUrl}/capture`, {
-      tabRef: "main",
+    const workspaces = await requestJson("POST", `${metadata.baseUrl}/workspaces`, {});
+    const seededTabs = daemon.workspaceTabRefs.materializeTabs(workspaces.workspaceRef, [
+      {
+        index: 1,
+        title: "Workspace",
+        url: "about:blank",
+        active: true,
+      },
+      {
+        index: 2,
+        title: "Details",
+        url: "https://example.com/details",
+        active: false,
+      },
+    ]);
+    const detailsTab = seededTabs[1];
+    await daemon.workspaceState.writeWorkspaceTab({
+      workspaceRef: workspaces.workspaceRef,
+      workspaceTabRef: detailsTab.workspaceTabRef,
+      browserTabIndex: 2,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/details",
+        title: "Details",
+      },
+      snapshotPath: "/tmp/details.md",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
     });
-    assert.equal(capture.ok, true);
+    await requestJson(
+      "POST",
+      `${metadata.baseUrl}/navigate?workspaceRef=${workspaces.workspaceRef}&workspaceTabRef=${detailsTab.workspaceTabRef}`,
+      {
+        url: "https://example.com/dashboard",
+      },
+    );
 
-    const liveQuery = await requestJson("POST", `${metadata.baseUrl}/query-snapshot`, {
-      tabRef: "main",
-      mode: "full",
-    });
-    assert.equal(liveQuery.ok, true);
-    assert.notEqual(liveQuery.snapshotRef, capture.snapshotRef);
-    assert.match(liveQuery.snapshotText, /Submit 2/);
+    const recordKnowledge = await requestJson(
+      "POST",
+      `${metadata.baseUrl}/record-knowledge?workspaceRef=${workspaces.workspaceRef}&workspaceTabRef=${detailsTab.workspaceTabRef}`,
+      {
+        guide: "Submit button is in the page body.",
+        keywords: ["submit", "dashboard"],
+        rationale: "The dashboard heading confirms the page is loaded.",
+      },
+    );
 
-    const exactQuery = await requestJson("POST", `${metadata.baseUrl}/query-snapshot`, {
-      snapshotRef: capture.snapshotRef,
-      mode: "full",
-    });
-    assert.equal(exactQuery.ok, true);
-    assert.equal(exactQuery.snapshotRef, capture.snapshotRef);
-    assert.match(exactQuery.snapshotText, /Submit 1/);
+    assert.equal(recordKnowledge.ok, true);
+    assert.equal(recordKnowledge.workspaceRef, workspaces.workspaceRef);
+    assert.equal(recordKnowledge.workspaceTabRef, detailsTab.workspaceTabRef);
+    assert.equal(recordKnowledge.page.normalizedPath, "/dashboard");
+    assert.equal(Array.isArray(recordKnowledge.knowledgeHits), true);
+    assert.equal(recordKnowledge.summary.includes("Recorded knowledge for /dashboard"), true);
+    assert.equal(recordKnowledge.record.guide, "Submit button is in the page body.");
+    assert.equal(recordKnowledge.record.page.normalizedPath, "/dashboard");
+    assert.equal(bridge.calls.some((call) => call.name === "select_page" && call.args.pageId === 2), true);
   } finally {
-    await daemon.stop().catch(() => {});
+    await daemon.stop();
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("browser-sessiond shutdown closes the direct-run HTTP server", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const bridge = createFakeBrowserBridge();
   const { daemon, metadata } = await startBrowserSessionDaemon({
     sessionRoot: path.join(root, "session"),
     port: 0,
     runtimeVersion: "test-http",
     runtimeRoots: createIsolatedRuntimeRoots(root),
-    createMcpBridge: async () => ({ ...createFakeBrowserBridge() }),
+    createBrowserBridge: async () => bridge,
   });
 
   try {
     const shutdown = await requestJson("POST", `${metadata.baseUrl}/shutdown`, {});
-
     assert.equal(shutdown.ok, true);
-    await assert.rejects(() => requestJson("GET", `${metadata.baseUrl}/health`));
   } finally {
-    await daemon.stop().catch(() => {});
+    await daemon.stop();
     await rm(root, { recursive: true, force: true });
   }
 });

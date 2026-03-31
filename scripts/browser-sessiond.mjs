@@ -1,5 +1,4 @@
 import http from "node:http";
-import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { realpathSync } from "node:fs";
@@ -10,17 +9,17 @@ import { randomUUID } from "node:crypto";
 import {
   DefaultBrowserRuntime,
   parseTabInventory,
-  resolveBrowserMcpLaunchOptions,
   runBrowserAction,
   runCaptureFlow,
 } from "./browser-action.mjs";
+import { createConnectedDevtoolsBrowserClient } from "./devtools-browser-client.mjs";
 import { querySnapshotText } from "./knowledge-query.mjs";
 import { KnowledgeStore } from "./knowledge-store.mjs";
-import { createConnectedMcpBrowserClient } from "./mcp-browser-client.mjs";
 import { defaultRuntimeRoots } from "./paths.mjs";
 import { pageIdentityFromSnapshotText } from "./page-identity.mjs";
 import { SnapshotStore } from "./snapshot-store.mjs";
 import { TabBindingStore } from "./tab-binding-store.mjs";
+import { WorkspaceStore } from "./workspace-store.mjs";
 
 import { HttpError } from "./http-contract.mjs";
 import { createHttpRouteHandler } from "./http-routes.mjs";
@@ -29,6 +28,63 @@ export const DEFAULT_RUNTIME_VERSION = "0.1.0";
 export const DEFAULT_HTTP_PORT = 3456;
 const DEFAULT_SNAPSHOT_TTL_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_WORKSPACE_TAB_URL = "chrome://newtab/";
+
+class WorkspaceTabRefStore {
+  constructor() {
+    this.workspaces = new Map();
+  }
+
+  materializeTabs(workspaceRef, tabs) {
+    const workspace = this.ensureWorkspace(workspaceRef);
+    return tabs.map((tab) => {
+      const workspaceTabRef = this.resolveOrMintWorkspaceTabRef(workspace, tab.index);
+      return {
+        ...omitIndex(tab),
+        workspaceTabRef,
+      };
+    });
+  }
+
+  resolvePageId(workspaceRef, workspaceTabRef) {
+    const workspace = this.workspaces.get(workspaceRef);
+    if (!workspace) {
+      throw new Error(`Workspace ${workspaceRef} is not available; create a new workspace with POST /workspaces.`);
+    }
+
+    const pageId = workspace.byWorkspaceTabRef.get(workspaceTabRef);
+    if (pageId === undefined) {
+      throw new Error(`workspaceTabRef ${workspaceTabRef} is not available in workspace ${workspaceRef}; call GET /tabs?workspaceRef=${workspaceRef} to refresh the workspace tab list.`);
+    }
+
+    return pageId;
+  }
+
+  ensureWorkspace(workspaceRef) {
+    const existing = this.workspaces.get(workspaceRef);
+    if (existing) {
+      return existing;
+    }
+
+    const created = {
+      byPageId: new Map(),
+      byWorkspaceTabRef: new Map(),
+    };
+    this.workspaces.set(workspaceRef, created);
+    return created;
+  }
+
+  resolveOrMintWorkspaceTabRef(workspace, pageId) {
+    const existing = workspace.byPageId.get(pageId);
+    if (existing) {
+      return existing;
+    }
+
+    const workspaceTabRef = `workspace_tab_${randomUUID()}`;
+    workspace.byPageId.set(pageId, workspaceTabRef);
+    workspace.byWorkspaceTabRef.set(workspaceTabRef, pageId);
+    return workspaceTabRef;
+  }
+}
 
 export class BrowserSessionDaemon {
   constructor(options = {}) {
@@ -40,7 +96,7 @@ export class BrowserSessionDaemon {
     this.browserUrl = options.browserUrl ?? null;
     this.connectionMode = options.connectionMode ?? null;
     this.runningChromeCommands = options.runningChromeCommands ?? [];
-    this.createMcpBridge = options.createMcpBridge ?? null;
+    this.createBrowserBridge = options.createBrowserBridge ?? null;
     this.runtimeRoots = options.runtimeRoots ?? defaultRuntimeRoots();
     this.server = null;
     this.metadata = null;
@@ -48,6 +104,8 @@ export class BrowserSessionDaemon {
     this.browserBridge = null;
     this.browserRuntime = this.createBrowserRuntime();
     this.tabBindings = new TabBindingStore(path.join(this.runtimeRoots.tempRoot, "tab-state"));
+    this.workspaceState = new WorkspaceStore(path.join(this.runtimeRoots.tempRoot, "workspace-state"));
+    this.workspaceTabRefs = new WorkspaceTabRefStore();
     this.snapshots = new SnapshotStore(path.join(this.runtimeRoots.tempRoot, "snapshots"), {
       ttlMs: DEFAULT_SNAPSHOT_TTL_MS,
     });
@@ -55,6 +113,7 @@ export class BrowserSessionDaemon {
     this.actionDeps = {
       browser: this.browserRuntime,
       tabBindings: this.tabBindings,
+      workspaceState: this.workspaceState,
       snapshots: this.snapshots,
       knowledge: this.knowledge,
     };
@@ -66,6 +125,7 @@ export class BrowserSessionDaemon {
     }
 
     await mkdir(this.sessionRoot, { recursive: true });
+    await this.resetEphemeralWorkspaceState();
     await this.ensureBrowserBridge();
 
     const now = new Date().toISOString();
@@ -113,6 +173,7 @@ export class BrowserSessionDaemon {
     }
 
     this.metadata = null;
+    this.workspaceTabRefs = new WorkspaceTabRefStore();
     await rm(this.metadataPath, { force: true }).catch(() => {});
   }
 
@@ -159,6 +220,10 @@ export class BrowserSessionDaemon {
     }
   }
 
+  resolveWorkspaceTabPageId(workspaceRef, workspaceTabRef) {
+    return this.workspaceTabRefs.resolvePageId(workspaceRef, workspaceTabRef);
+  }
+
   snapshotMetadata() {
     this.ensureStarted();
     return {
@@ -196,6 +261,15 @@ export class BrowserSessionDaemon {
     }
 
     await writeFile(this.metadataPath, `${JSON.stringify(this.metadata, null, 2)}\n`, "utf8");
+  }
+
+  async resetEphemeralWorkspaceState() {
+    this.workspaceTabRefs = new WorkspaceTabRefStore();
+    await Promise.all([
+      rm(path.join(this.runtimeRoots.tempRoot, "tab-state"), { recursive: true, force: true }),
+      rm(path.join(this.runtimeRoots.tempRoot, "workspace-state"), { recursive: true, force: true }),
+      rm(path.join(this.runtimeRoots.tempRoot, "snapshots"), { recursive: true, force: true }),
+    ]);
   }
 
   createBrowserRuntime() {
@@ -305,9 +379,17 @@ export class BrowserSessionDaemon {
     };
 
     await this.knowledge.append(record);
+    const knowledgeHits = await this.readKnowledgeHits(page);
 
     return {
       ok: true,
+      workspaceRef: params.tabRef,
+      ...(params.workspaceTabRef ? { workspaceTabRef: params.workspaceTabRef } : {}),
+      page: {
+        ...page,
+      },
+      knowledgeHits,
+      summary: `Recorded knowledge for ${page.normalizedPath}`,
       record: {
         ...record,
         page: {
@@ -348,7 +430,7 @@ export class BrowserSessionDaemon {
   async refreshSnapshotContextForTab(tabRef) {
     const bindingExists = await this.tabBindings.exists(tabRef);
     if (!bindingExists) {
-      throw new Error(`No tab binding exists for ${tabRef}; call /capture first`);
+      throw new Error(`Workspace ${tabRef} is not available; create a new workspace with POST /workspaces.`);
     }
 
     const refreshed = await runCaptureFlow({ tabRef }, this.actionDeps);
@@ -377,16 +459,22 @@ export class BrowserSessionDaemon {
       return this.browserBridge;
     }
 
-    const launchOptions = this.resolveLaunchOptions();
-    this.browserUrl = browserUrlFromLaunchOptions(launchOptions);
-    this.connectionMode = this.browserUrl ? "browserUrl" : "autoConnect";
-
-    if (this.createMcpBridge) {
-      this.browserBridge = await this.createMcpBridge({ launchOptions });
+    if (this.createBrowserBridge) {
+      this.browserBridge = await this.createBrowserBridge({
+        browserUrl: this.browserUrl,
+        env: this.env,
+        runningChromeCommands: this.runningChromeCommands,
+      });
       return this.browserBridge;
     }
 
-    const connected = await createConnectedMcpBrowserClient(launchOptions, this.env);
+    const connected = await createConnectedDevtoolsBrowserClient({
+      env: this.env,
+      browserUrl: this.browserUrl ?? undefined,
+      runningChromeCommands: this.runningChromeCommands,
+    });
+    this.browserUrl = connected.browserUrl;
+    this.connectionMode = "browserUrl";
     const runtime = new DefaultBrowserRuntime(connected.client);
     this.browserBridge = {
       close: connected.close,
@@ -398,25 +486,16 @@ export class BrowserSessionDaemon {
     return this.browserBridge;
   }
 
-  resolveLaunchOptions() {
-    const env = this.browserUrl
-      ? {
-          ...this.env,
-          SASIKI_BROWSER_URL: this.browserUrl,
-        }
-      : this.env;
+  async toPublicCaptureResult(result) {
+    const workspaceRef = result.workspaceRef ?? result.tabRef;
+    const tabs = await this.listWorkspaceTabs(workspaceRef);
 
-    return resolveBrowserMcpLaunchOptions(env, {
-      runningChromeCommands: this.runningChromeCommands,
-    });
-  }
-
-  toPublicCaptureResult(result) {
     return {
       ok: true,
+      workspaceRef,
       snapshotRef: snapshotRefFromPath(result.snapshotPath),
       ...result,
-      tabs: result.tabs,
+      ...(tabs !== undefined ? { tabs } : {}),
     };
   }
 
@@ -431,6 +510,17 @@ export class BrowserSessionDaemon {
 
   snapshotPathFromRef(snapshotRef) {
     return path.join(this.runtimeRoots.tempRoot, "snapshots", `${snapshotRef}.md`);
+  }
+
+  async listWorkspaceTabs(workspaceRef) {
+    const workspace = await this.workspaceState.readWorkspace(workspaceRef);
+    const workspaceTabs = await this.workspaceState.listWorkspaceTabs(workspaceRef);
+    return workspaceTabs.map((workspaceTab) => ({
+      workspaceTabRef: workspaceTab.workspaceTabRef,
+      title: workspaceTab.page.title,
+      url: workspaceTabUrlFromPage(workspaceTab.page),
+      active: workspaceTab.workspaceTabRef === workspace.activeWorkspaceTabRef,
+    }));
   }
 }
 
@@ -513,12 +603,25 @@ function snapshotRefFromPath(snapshotPath) {
   return path.basename(snapshotPath, path.extname(snapshotPath));
 }
 
-function browserUrlFromLaunchOptions(launchOptions) {
-  const index = launchOptions.args.findIndex((arg) => arg === "--browserUrl");
-  if (index >= 0) {
-    return launchOptions.args[index + 1] ?? null;
+export function createWorkspaceTabRefStore() {
+  return new WorkspaceTabRefStore();
+}
+
+function omitIndex(tab) {
+  const clone = { ...tab };
+  delete clone.index;
+  return clone;
+}
+
+function workspaceTabUrlFromPage(page) {
+  if (page.origin === "null") {
+    if (page.normalizedPath === "/blank") {
+      return "about:blank";
+    }
+    return page.normalizedPath;
   }
-  return null;
+
+  return `${page.origin}${page.normalizedPath}`;
 }
 
 export function isDirectRunEntry(importMetaUrl, argv1 = process.argv[1]) {
