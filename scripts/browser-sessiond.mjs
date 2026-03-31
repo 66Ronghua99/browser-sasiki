@@ -102,6 +102,7 @@ export class BrowserSessionDaemon {
     this.metadata = null;
     this.metadataPath = path.join(this.sessionRoot, "session.json");
     this.browserBridge = null;
+    this.stopPromise = null;
     this.browserRuntime = this.createBrowserRuntime();
     this.workspaceBindings = new WorkspaceBindingStore(path.join(this.runtimeRoots.tempRoot, "workspace-bindings"));
     this.workspaceState = new WorkspaceStore(path.join(this.runtimeRoots.tempRoot, "workspace-state"));
@@ -159,22 +160,34 @@ export class BrowserSessionDaemon {
   }
 
   async stop() {
-    const server = this.server;
-    this.server = null;
-
-    if (server) {
-      await closeServer(server);
+    if (this.stopPromise) {
+      return this.stopPromise;
     }
 
-    const bridge = this.browserBridge;
-    this.browserBridge = null;
-    if (bridge && typeof bridge.close === "function") {
-      await bridge.close();
-    }
+    this.stopPromise = (async () => {
+      const server = this.server;
+      this.server = null;
 
-    this.metadata = null;
-    this.workspaceTabRefs = new WorkspaceTabRefStore();
-    await rm(this.metadataPath, { force: true }).catch(() => {});
+      if (server) {
+        await closeServer(server).catch(() => {});
+      }
+
+      const bridge = this.browserBridge;
+      this.browserBridge = null;
+      if (bridge && typeof bridge.close === "function") {
+        await bridge.close().catch(() => {});
+      }
+
+      this.metadata = null;
+      this.workspaceTabRefs = new WorkspaceTabRefStore();
+      await rm(this.metadataPath, { force: true }).catch(() => {});
+    })();
+
+    try {
+      await this.stopPromise;
+    } finally {
+      this.stopPromise = null;
+    }
   }
 
   async handleHttpRequest(endpoint, body) {
@@ -474,6 +487,7 @@ export class BrowserSessionDaemon {
         env: this.env,
         runningChromeCommands: this.runningChromeCommands,
       });
+      this.attachBrowserBridgeDisconnectHandler(this.browserBridge);
       return this.browserBridge;
     }
 
@@ -486,13 +500,25 @@ export class BrowserSessionDaemon {
     this.connectionMode = "browserUrl";
     const runtime = new DefaultBrowserRuntime(connected.client);
     this.browserBridge = {
+      onDisconnect: connected.onDisconnect,
       close: connected.close,
       listPages: async () => connected.client.listPages(),
       newPage: async (url, background) => connected.client.newPage(url, background),
       captureSnapshot: async () => runtime.captureSnapshot(),
       callTool: async (name, args) => runtime.callBrowserTool(name, args),
     };
+    this.attachBrowserBridgeDisconnectHandler(this.browserBridge);
     return this.browserBridge;
+  }
+
+  attachBrowserBridgeDisconnectHandler(bridge) {
+    if (!bridge || typeof bridge.onDisconnect !== "function") {
+      return;
+    }
+
+    bridge.onDisconnect(() => {
+      void this.stop().catch(() => {});
+    });
   }
 
   async toPublicWorkspaceResult(result) {

@@ -329,6 +329,22 @@ export async function createConnectedDevtoolsBrowserClient(options = {}, depende
   return {
     browserUrl,
     client: new DevtoolsBrowserClient(browser, options),
+    onDisconnect(listener) {
+      if (typeof listener !== "function") {
+        throw new TypeError("onDisconnect listener must be a function");
+      }
+
+      if (typeof browser.once === "function") {
+        browser.once("disconnected", () => {
+          listener(new Error("Browser disconnected"));
+        });
+        return;
+      }
+
+      browser.on?.("disconnected", () => {
+        listener(new Error("Browser disconnected"));
+      });
+    },
     close: async () => {
       await browser.close?.();
     },

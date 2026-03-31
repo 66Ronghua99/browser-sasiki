@@ -19,6 +19,24 @@ function createStubBrowserBridge() {
   };
 }
 
+function createDisconnectableBrowserBridge() {
+  let disconnectListener = null;
+
+  return {
+    onDisconnect(listener) {
+      disconnectListener = listener;
+    },
+    disconnect() {
+      disconnectListener?.(new Error("CDP disconnected"));
+    },
+    listPages: async () => "## Pages\n- 1 (current) [Workspace](chrome://newtab/)",
+    newPage: async () => "## Pages\n- 1 (current) [Workspace](chrome://newtab/)",
+    captureSnapshot: async () => "uid=root RootWebArea \"Workspace\" url=\"chrome://newtab/\"",
+    callTool: async () => ({ content: [{ type: "text", text: "ok" }] }),
+    close: async () => {},
+  };
+}
+
 test("browser-sessiond treats symlinked script paths as direct-run entry", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-entry-"));
   const realEntryPath = fileURLToPath(new URL("../../scripts/browser-sessiond.mjs", import.meta.url));
@@ -93,6 +111,30 @@ test("browser-sessiond shutdown closes the direct-run HTTP server", async () => 
     const shutdown = await requestJson("POST", `${metadata.baseUrl}/shutdown`, {});
 
     assert.equal(shutdown.ok, true);
+    await assert.rejects(() => requestJson("GET", `${metadata.baseUrl}/health`));
+  } finally {
+    await daemon.stop().catch(() => {});
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("browser-sessiond stops serving health after the browser bridge disconnects", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const bridge = createDisconnectableBrowserBridge();
+  const { daemon, metadata } = await startBrowserSessionDaemon({
+    sessionRoot: path.join(root, "session"),
+    port: 0,
+    runtimeVersion: "test-http",
+    createBrowserBridge: async () => bridge,
+  });
+
+  try {
+    const health = await requestJson("GET", `${metadata.baseUrl}/health`);
+    assert.equal(health.ok, true);
+
+    bridge.disconnect();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
     await assert.rejects(() => requestJson("GET", `${metadata.baseUrl}/health`));
   } finally {
     await daemon.stop().catch(() => {});

@@ -149,6 +149,46 @@ test("createConnectedDevtoolsBrowserClient connects over CDP and closes the brow
   ]);
 });
 
+test("createConnectedDevtoolsBrowserClient forwards browser disconnect events", async () => {
+  const calls = [];
+  const listeners = new Map();
+  const fakeBrowser = {
+    contexts: () => [],
+    once: (event, listener) => {
+      calls.push({ type: "once", event });
+      listeners.set(event, listener);
+    },
+    close: async () => {},
+  };
+
+  const connected = await createConnectedDevtoolsBrowserClient(
+    {
+      env: {
+        SASIKI_BROWSER_URL: "http://127.0.0.1:64942",
+      },
+      runningChromeCommands: [],
+    },
+    {
+      connectOverCDP: async () => fakeBrowser,
+    },
+  );
+
+  let disconnected = false;
+  connected.onDisconnect(() => {
+    disconnected = true;
+  });
+
+  listeners.get("disconnected")?.(fakeBrowser);
+
+  assert.equal(disconnected, true);
+  assert.deepEqual(calls, [
+    {
+      type: "once",
+      event: "disconnected",
+    },
+  ]);
+});
+
 test("devtools browser client lists live pages and raw targets from the attached browser", async () => {
   const { browser, context } = createHarnessBrowser({
     pages: [
