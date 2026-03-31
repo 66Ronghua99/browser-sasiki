@@ -238,6 +238,8 @@ node dist/scripts/record-knowledge.js \
 - Use one `--tab-ref` consistently for one browser task context.
 - Capture first if you are unsure what the current browser context is.
 - First capture now creates a new workspace tab by default, so it should not hijack the user's current active tab unless you explicitly pass `--tab-index`.
+- Normal CLI calls reuse one healthy `browser-sessiond`, and the next request should automatically replace an older daemon when the installed runtime changes.
+- `tabRef` bindings are durable workspace pointers, not magic live handles. If the bound Chrome tab is manually closed, re-run `capture` or `select-tab` to rebind that workspace.
 - Treat returned `tabRef` and `snapshotRef` as the main runtime contract. Normal agent flows should not depend on runtime file paths.
 - Normal CLI command output intentionally omits runtime file paths. Even if you know the temp files exist, use `tabRef` / `snapshotRef` and the CLI front door instead of directly reading runtime files during normal agent execution.
 - `query-snapshot.js --mode search` should include at least one selector such as `--query`, `--role`, or `--uid`.

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { access, readFile, rm } from "node:fs/promises";
+import { access, readFile, rm, stat } from "node:fs/promises";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -57,26 +57,45 @@ interface SessionRpcResponseMap {
 export async function ensureSessionDaemon(options: SessionClientOptions = {}): Promise<SessionMetadata> {
   const env = options.env ?? (process.env as Record<string, string | undefined>);
   const paths = resolveSessionPaths(options.sessionRoot);
+  const runtimeVersion = await resolveRequestedRuntimeVersion(options);
   if (options.launchDaemon) {
     const cached = injectedSessionCache.get(paths.sessionRoot);
-    if (cached && isProcessAlive(cached.pid) && fs.existsSync(cached.socketPath)) {
+    if (
+      cached
+      && cached.runtimeVersion === runtimeVersion
+      && isProcessAlive(cached.pid)
+      && fs.existsSync(cached.socketPath)
+    ) {
       return cached;
+    }
+    if (cached) {
+      await requestShutdown(cached.socketPath);
+      injectedSessionCache.delete(paths.sessionRoot);
     }
   }
   const existing = await readSessionMetadata(paths.metadataPath);
 
   if (existing) {
-    if (options.launchDaemon && isProcessAlive(existing.pid) && fs.existsSync(existing.socketPath)) {
+    if (
+      options.launchDaemon
+      && existing.runtimeVersion === runtimeVersion
+      && isProcessAlive(existing.pid)
+      && fs.existsSync(existing.socketPath)
+    ) {
       injectedSessionCache.set(paths.sessionRoot, existing);
       return existing;
     }
 
     const healthy = await tryHealthcheck(existing.socketPath);
-    if (healthy) {
+    if (healthy && healthy.runtimeVersion === runtimeVersion) {
       if (options.launchDaemon) {
         injectedSessionCache.set(paths.sessionRoot, healthy);
       }
       return healthy;
+    }
+
+    if (healthy) {
+      await requestShutdown(existing.socketPath);
     }
 
     await cleanupStaleSession(paths);
@@ -87,7 +106,7 @@ export async function ensureSessionDaemon(options: SessionClientOptions = {}): P
   await launchDaemon({
     env,
     sessionRoot: paths.sessionRoot,
-    runtimeVersion: options.runtimeVersion ?? DEFAULT_RUNTIME_VERSION,
+    runtimeVersion,
   });
 
   if (options.launchDaemon) {
@@ -267,6 +286,32 @@ async function tryHealthcheck(socketPath: string): Promise<SessionMetadata | nul
 async function cleanupStaleSession(paths: SessionPaths): Promise<void> {
   await rm(paths.metadataPath, { force: true }).catch(() => {});
   await rm(paths.socketPath, { force: true }).catch(() => {});
+}
+
+async function requestShutdown(socketPath: string): Promise<void> {
+  try {
+    await sendSocketRequest(socketPath, {
+      requestId: randomUUID(),
+      method: "shutdown",
+      params: {},
+    });
+  } catch {
+    // Best effort only. We still clean stale metadata/socket afterwards.
+  }
+}
+
+async function resolveRequestedRuntimeVersion(options: SessionClientOptions): Promise<string> {
+  if (options.runtimeVersion) {
+    return options.runtimeVersion;
+  }
+
+  try {
+    const daemonEntry = resolveDaemonEntry();
+    const entryStat = await stat(daemonEntry.entryPath);
+    return `${DEFAULT_RUNTIME_VERSION}+${Math.trunc(entryStat.mtimeMs)}`;
+  } catch {
+    return DEFAULT_RUNTIME_VERSION;
+  }
 }
 
 function sanitizeEnv(env: Record<string, string | undefined>): Record<string, string> {

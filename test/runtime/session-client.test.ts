@@ -295,8 +295,26 @@ test("session client ensureSessionDaemon discards stale metadata and recreates t
     const metadata = await ensureSessionDaemon(harness.options);
 
     assert.equal(harness.launchCount(), 1);
-    assert.equal(metadata.runtimeVersion, "0.1.0");
+    assert.equal(metadata.runtimeVersion, "0.1.0-test");
     assert.equal(metadata.pid > 0, true);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("session client restarts a healthy daemon when the requested runtimeVersion changes", async () => {
+  const harness = await createSessionClientHarness();
+
+  try {
+    const first = await ensureSessionDaemon(harness.options);
+    const second = await ensureSessionDaemon({
+      ...harness.options,
+      runtimeVersion: "0.2.0-test",
+    });
+
+    assert.equal(first.runtimeVersion, "0.1.0-test");
+    assert.equal(second.runtimeVersion, "0.2.0-test");
+    assert.equal(harness.launchCount(), 2);
   } finally {
     await harness.cleanup();
   }
@@ -308,7 +326,7 @@ test("session client exports a narrow method-plus-params request API for other l
   try {
     const health = await sendSessionRpcRequest("health", {}, harness.options);
 
-    assert.equal(health.runtimeVersion, "0.1.0");
+    assert.equal(health.runtimeVersion, "0.1.0-test");
     assert.equal(typeof health.socketPath, "string");
     assert.equal(health.socketPath.endsWith("browser-sessiond.sock"), true);
   } finally {
@@ -331,6 +349,7 @@ async function createSessionClientHarness(): Promise<{
   const options: SessionClientOptions = {
     env: {},
     sessionRoot,
+    runtimeVersion: "0.1.0-test",
     startupTimeoutMs: 2_000,
     launchDaemon: async (daemonOptions) => {
       launches += 1;

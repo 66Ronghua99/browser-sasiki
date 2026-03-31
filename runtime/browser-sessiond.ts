@@ -225,7 +225,9 @@ export class BrowserSessionDaemon {
         return this.requireMetadata();
       case "shutdown": {
         const result = { ok: true as const };
-        await this.stop();
+        setImmediate(() => {
+          void this.stop();
+        });
         return result;
       }
       case "capture":

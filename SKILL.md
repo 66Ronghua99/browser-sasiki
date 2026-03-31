@@ -29,6 +29,8 @@ If capture fails because Chrome is not attachable, open `chrome://inspect/#remot
 
 Establish context first. Then keep doing the browser work through this skill instead of mixing in unrelated browser calls. In this phase the skill attaches to an already running Chrome session through Chrome DevTools MCP auto-connect, and the first command starts `browser-sessiond` as the single runtime owner for MCP attach, snapshot capture, snapshot querying, and knowledge IO. The CLI scripts are thin RPC entrypoints into that daemon; they do not each own their own browser session. Chrome DevTools MCP snapshots are accessibility-tree text headed by `## Latest page snapshot`, and element handles in that snapshot are `uid` values. When the built-in guidance is enough, continue. When it is not enough, query the latest snapshot more precisely. If the run exposes something stable and useful for the same page identity, record it. Knowledge is a byproduct of successful browser work, not the main goal.
 
+The daemon is persistent but not immortal. Normal CLI calls reuse one healthy `browser-sessiond`, and a rebuilt or updated install should replace the old daemon automatically on the next request. A `tabRef` still points at one bound workspace tab, so if that tab is manually closed later, the binding can become stale and should be re-established with `capture` or `select-tab`.
+
 ## Command Surface
 
 At the CLI level, the skill currently exposes these commands:

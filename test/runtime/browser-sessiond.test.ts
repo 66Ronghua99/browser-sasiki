@@ -8,6 +8,7 @@ import test from "node:test";
 
 import { assertSessionMetadata, type SessionMetadata } from "../../runtime/session-metadata.js";
 import { BrowserSessionDaemon, type BrowserSessionDaemonOptions } from "../../runtime/browser-sessiond.js";
+import { sendSessionSocketRequest } from "../../runtime/socket-client.js";
 
 test("browser-sessiond prefers explicit MCP args over browserUrl and discovery", async () => {
   const harness = await createDaemonHarness({
@@ -221,8 +222,33 @@ test("browser-sessiond shuts down cleanly and removes metadata artifacts", async
     await harness.daemon.start();
     await harness.daemon.handleRequest("shutdown", {});
 
-    await assert.rejects(() => readFile(harness.metadataPath, "utf8"));
-    await assert.rejects(() => readFile(harness.socketPath, "utf8"));
+    await waitFor(async () => {
+      await assert.rejects(() => readFile(harness.metadataPath, "utf8"));
+      await assert.rejects(() => readFile(harness.socketPath, "utf8"));
+    });
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("browser-sessiond shutdown over the session socket returns before teardown completes", async () => {
+  const harness = await createDaemonHarness();
+
+  try {
+    await harness.daemon.start();
+
+    const result = await sendSessionSocketRequest(harness.socketPath, {
+      requestId: "req_shutdown",
+      method: "shutdown",
+      params: {},
+    });
+
+    assert.deepEqual(result, { ok: true });
+
+    await waitFor(async () => {
+      await assert.rejects(() => readFile(harness.metadataPath, "utf8"));
+      await assert.rejects(() => readFile(harness.socketPath, "utf8"));
+    });
   } finally {
     await harness.cleanup();
   }
@@ -278,4 +304,23 @@ async function createDaemonHarness(options?: {
       await rm(root, { recursive: true, force: true });
     },
   };
+}
+
+async function waitFor(
+  fn: () => Promise<void>,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      await fn();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("timed out waiting for browser-sessiond cleanup");
 }
