@@ -1,9 +1,9 @@
 ---
-name: browser-skill
-description: Use when you want to complete browser automation work through a workspace-first HTTP browser skill that talks directly to an attached Chrome session and gets cheaper and faster over time by reusing page knowledge gathered during execution.
+name: browser-sasiki
+description: Use the skill for every browser automation work, which will get cheaper and faster over time by reusing page knowledge gathered during execution.
 ---
 
-# Browser Skill
+# Browser Sasiki
 
 ## Overview
 
@@ -61,7 +61,7 @@ Use exactly one workspace scope:
 
 Choose one explicit mode for `/query`:
 
-- `mode: "search"`: return compact `matches` only. Use this when you need to find an element before a click or type.
+- `mode: "search"`: return compact `matches` only. Each match is concise (`lineNumber`, `role`, `text`, `uid`) and nested duplicate text hits are trimmed when a richer parent element already covers the same cue. Use this when you need to find an element before a click or type.
 - `mode: "full"`: return the whole `snapshotText`. Use this when you need to inspect the page structure or recover context.
 
 ### Search Selectors
@@ -96,10 +96,15 @@ Use selector fields only with `mode: "search"`:
 
 You must successfully call `record-knowledge` before the final answer when either of these is true:
 
-- you have used `/query` with full-page exploration to locate the right element or recover context
+- you have used `/query` with full-page exploration to locate the right element or recover context, and that exploration exposed reusable keywords or page cues that can help later runs read less irrelevant context
 - a query result or successful action revealed a stable reusable cue for the same page or page family
 
-If one of those triggers happened and no knowledge was recorded, the task is not complete.
+Before writing, compare the new cue with the current `knowledgeHits`:
+
+- if `knowledgeHits` already cover substantially the same cue for the same page, skip the write
+- if the cue is genuinely new, record it once; repeated writes for the same page + guide + keyword set are treated idempotently
+
+The goal is to leave one reusable hint behind, not to restate knowledge that is already loading correctly.
 
 ## Common Failure Mode
 
@@ -174,5 +179,5 @@ curl -s -X POST "$BASE_URL/record-knowledge?workspaceRef=workspace_demo" \
 - Start with the smallest call that can prove the next step.
 - Prefer `search` over `full` unless you really need page-wide inspection.
 - Treat returned `knowledgeHits` as hints, not commands; they narrow exploration but do not replace reading the current page.
-- Record only stable cues that should help a later run on the same page or page family.
+- Record only stable, genuinely new cues that should help a later run on the same page or page family.
 - Treat the workspace contract as the runtime contract. Do not route around the daemon by reading temp files directly during normal execution.

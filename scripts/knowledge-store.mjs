@@ -72,9 +72,35 @@ function normalizeKnowledgeRecord(record) {
   };
 }
 
+function normalizeKnowledgeText(value) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizedKeywordSignature(keywords) {
+  return [...new Set(keywords.map((keyword) => normalizeKnowledgeText(keyword)))]
+    .sort()
+    .join("\u0000");
+}
+
+function semanticKnowledgeKey(record) {
+  return [
+    record.page.origin,
+    record.page.normalizedPath,
+    normalizeKnowledgeText(record.guide),
+    normalizedKeywordSignature(record.keywords),
+  ].join("\u0001");
+}
+
 function canonicalizeRecords(records) {
-  const byId = new Map();
+  const bySemanticKey = new Map();
   for (const record of records) {
+    const semanticKey = semanticKnowledgeKey(record);
+    bySemanticKey.delete(semanticKey);
+    bySemanticKey.set(semanticKey, record);
+  }
+
+  const byId = new Map();
+  for (const record of bySemanticKey.values()) {
     byId.delete(record.id);
     byId.set(record.id, record);
   }

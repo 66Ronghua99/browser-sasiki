@@ -374,6 +374,48 @@ test("browser-sessiond record-knowledge returns the bridged workspace response a
   }
 });
 
+test("browser-sessiond record-knowledge keeps repeated stable guidance idempotent on the same page", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const bridge = createFakeBrowserBridge();
+  const { daemon, metadata } = await startBrowserSessionDaemon({
+    sessionRoot: path.join(root, "session"),
+    port: 0,
+    runtimeVersion: "test-http",
+    runtimeRoots: createIsolatedRuntimeRoots(root),
+    createBrowserBridge: async () => bridge,
+  });
+
+  try {
+    const workspaces = await requestJson("POST", `${metadata.baseUrl}/workspaces`, {});
+    const first = await requestJson(
+      "POST",
+      `${metadata.baseUrl}/record-knowledge?workspaceRef=${workspaces.workspaceRef}`,
+      {
+        guide: "Search is available in the top toolbar.",
+        keywords: ["toolbar", "search"],
+        rationale: "The search input is consistently visible in the top toolbar.",
+      },
+    );
+    const second = await requestJson(
+      "POST",
+      `${metadata.baseUrl}/record-knowledge?workspaceRef=${workspaces.workspaceRef}`,
+      {
+        guide: "Search is available in the top toolbar.",
+        keywords: ["search", "toolbar"],
+        rationale: "The search input is still in the same toolbar position.",
+      },
+    );
+
+    assert.equal(first.knowledgeHits.length, 1);
+    assert.equal(second.knowledgeHits.length, 1);
+    assert.equal(second.knowledgeHits[0]?.guide, "Search is available in the top toolbar.");
+    assert.deepEqual(second.knowledgeHits[0]?.keywords, ["search", "toolbar"]);
+  } finally {
+    await daemon.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("browser-sessiond shutdown closes the direct-run HTTP server", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
   const bridge = createFakeBrowserBridge();

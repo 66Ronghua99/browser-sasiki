@@ -151,6 +151,51 @@ test("recording the same knowledge id replaces stale duplicates for id and page 
   assert.equal(allRecords[0].guide, "Updated queue guidance.");
 });
 
+test("semantic duplicate knowledge on the same page collapses into one reusable hit", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-knowledge-"));
+  const storePath = path.join(root, "page-knowledge.jsonl");
+  const store = new KnowledgeStore(storePath);
+
+  await store.append({
+    id: "k-semantic-1",
+    page: {
+      origin: "https://example.com",
+      normalizedPath: "/chat/inbox/current",
+    },
+    guide: "Check the queue header first.",
+    keywords: ["header", "inbox"],
+    rationale: "The header confirms the inbox context.",
+    createdAt: "2026-03-30T00:00:00.000Z",
+    updatedAt: "2026-03-30T00:00:00.000Z",
+  });
+
+  await store.append({
+    id: "k-semantic-2",
+    page: {
+      origin: "https://example.com",
+      normalizedPath: "/chat/inbox/current/",
+    },
+    guide: "Check the queue header first.",
+    keywords: ["inbox", "header"],
+    rationale: "The queue header confirms the inbox context again.",
+    createdAt: "2026-03-31T00:00:00.000Z",
+    updatedAt: "2026-03-31T00:00:00.000Z",
+  });
+
+  const matches = await store.queryByPage({
+    origin: "https://example.com",
+    normalizedPath: "/chat/inbox/current",
+  });
+
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].guide, "Check the queue header first.");
+  assert.deepEqual(matches[0].keywords, ["inbox", "header"]);
+
+  const allRecords = await store.readAll();
+  assert.equal(allRecords.length, 1);
+  assert.equal(allRecords[0].id, "k-semantic-2");
+});
+
 test("legacy JSONL records are normalized on read for both id and page lookups", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-knowledge-"));
   const storePath = path.join(root, "page-knowledge.jsonl");

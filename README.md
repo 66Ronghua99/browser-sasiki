@@ -1,6 +1,6 @@
-# Browser Skill
+# Browser Sasiki
 
-Browser Skill is a workspace-first browser automation skill for coding agents. Its front door is HTTP-only: one long-lived daemon owns the attached Chrome session, and agents interact with it through direct DevTools-backed JSON endpoints instead of per-command CLI wrappers.
+Browser Sasiki is a workspace-first browser automation skill for coding agents. Its front door is HTTP-only: one long-lived daemon owns the attached Chrome session, and agents interact with it through direct DevTools-backed JSON endpoints instead of per-command CLI wrappers.
 
 ## Runtime Requirements
 
@@ -102,7 +102,7 @@ curl -s -X POST "$BASE_URL/navigate?workspaceRef=workspace_demo" \
 - `workspaceRef` means live workspace access.
 - `workspaceTabRef` means an explicit tab inside the workspace.
 - Use exactly one workspace scope at a time.
-- Use `mode: "search"` when you want compact `matches`.
+- Use `mode: "search"` when you want compact `matches`. Search results return concise match objects instead of duplicating the raw snapshot line.
 - Use `mode: "full"` when you want the entire `snapshotText`.
 - With `mode: "search"`, send at least one of `query`, `role`, or `uid`.
 - With `mode: "full"`, do not send selector fields.
@@ -113,7 +113,7 @@ curl -s -X POST "$BASE_URL/navigate?workspaceRef=workspace_demo" \
 - `ensure-browser-session.mjs` is the startup-only shell front door; it starts or reuses the daemon and prints session metadata.
 - HTTP remains the action surface after startup; there is no separate shell RPC layer for `/workspaces`, `/tabs`, `/query`, or mutations.
 - `knowledgeHits` are the normal reusable-knowledge surface during a task.
-- `record-knowledge` is the only explicit durable write path.
+- `record-knowledge` is the only explicit durable write path, and repeated writes for the same page + cue are treated idempotently.
 - Normal responses expose workspace identity and page identity, not local snapshot paths.
 - `uid` is the only public element handle for browser actions and `/query`.
 

@@ -139,3 +139,24 @@ test("querySnapshotText search mode narrows matches with explicit selectors even
   assert.equal(result.matches[0].uid, "1_1");
   assert.equal(result.knowledgeHits.length, 1);
 });
+
+test("querySnapshotText search mode drops nested duplicate text hits and omits raw payload noise", () => {
+  const repeatedSnapshotText = [
+    "## Latest page snapshot",
+    'uid=1_0 RootWebArea "Timeline" url="https://x.com/zarazhangrui"',
+    '  uid=1_1 article "Imagine if Claude Code/Codex can access chats, calendars, meetings, docs, sheets. That is possible now with Lark CLI. I just built a skill on top."',
+    '    uid=1_2 StaticText "Imagine if Claude Code/Codex can access chats, calendars, meetings, docs, sheets. That is possible now with Lark CLI. I just built a skill on top."',
+  ].join("\n");
+
+  const result = querySnapshotText({
+    snapshotText: repeatedSnapshotText,
+    mode: "search",
+    text: "Lark CLI",
+  });
+
+  assertSearchResult(result);
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].uid, "1_1");
+  assert.equal(result.matches[0].role, "article");
+  assert.equal("raw" in result.matches[0], false);
+});

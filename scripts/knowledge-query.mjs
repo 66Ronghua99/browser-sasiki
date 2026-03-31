@@ -2,7 +2,7 @@ import { normalizePagePath, pageIdentityFromSnapshotText } from "./page-identity
 import { parseSnapshotText } from "./snapshot-parser.mjs";
 
 function normalizeText(value) {
-  return value.trim().toLowerCase();
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function elementTokens(element) {
@@ -41,11 +41,61 @@ function matchesKnowledge(element, knowledgeHits) {
 function toMatch(element) {
   return {
     lineNumber: element.lineNumber,
-    raw: element.raw,
     role: element.role,
     text: element.text,
     uid: element.uid,
   };
+}
+
+function uniqueMatchKey(element) {
+  return [
+    element.uid ?? "",
+    normalizeText(element.role ?? ""),
+    normalizeText(element.text ?? ""),
+  ].join("\u0000");
+}
+
+function isRedundantStaticTextMatch(element, matches) {
+  if (normalizeText(element.role ?? "") !== "statictext") {
+    return false;
+  }
+
+  const elementText = normalizeText(element.text ?? "");
+  if (elementText.length === 0) {
+    return false;
+  }
+
+  return matches.some((candidate) => {
+    if (candidate === element) {
+      return false;
+    }
+
+    if (normalizeText(candidate.role ?? "") === "statictext") {
+      return false;
+    }
+
+    const candidateText = normalizeText(candidate.text ?? "");
+    if (candidateText.length === 0 || candidateText.length < elementText.length) {
+      return false;
+    }
+
+    return candidateText.includes(elementText);
+  });
+}
+
+function dedupeMatches(matches) {
+  const uniqueMatches = [];
+  const seen = new Set();
+  for (const match of matches) {
+    const key = uniqueMatchKey(match);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    uniqueMatches.push(match);
+  }
+
+  return uniqueMatches.filter((match) => !isRedundantStaticTextMatch(match, uniqueMatches));
 }
 
 function defaultPageFromSnapshot(snapshotText, explicitPage) {
@@ -75,7 +125,7 @@ export function querySnapshotText(input) {
   }
 
   const explicitMatches = parsedSnapshot.elements.filter((element) => matchesCriteria(element, input));
-  const matches = explicitMatches;
+  const matches = dedupeMatches(explicitMatches);
 
   return {
     mode: "search",
