@@ -1,16 +1,13 @@
 # Browser Skill
 
-Browser Skill is a browser automation skill for coding agents. Its front door is HTTP-only: one long-lived daemon owns the browser session, and agents interact with it through `curl`-friendly JSON endpoints instead of per-command CLI wrappers.
+Browser Skill is a workspace-first browser automation skill for coding agents. Its front door is HTTP-only: one long-lived daemon owns the attached Chrome session, and agents interact with it through direct DevTools-backed JSON endpoints instead of per-command CLI wrappers.
 
 ## Runtime Requirements
 
 - Node `>=20`
 - Google Chrome already running in the session you want to automate
 - remote debugging enabled for that running Chrome session
-- Chrome DevTools MCP available through `npx chrome-devtools-mcp@latest --autoConnect`, or equivalent custom command via:
-  - `SASIKI_BROWSER_MCP_COMMAND`
-  - `SASIKI_BROWSER_MCP_ARGS`
-- approval for Chrome DevTools MCP to attach when Chrome prompts for confirmation
+- approval for Chrome to allow the daemon to attach if the browser prompts for confirmation
 
 ## Quick Start
 
@@ -26,79 +23,88 @@ Check health:
 curl -s http://127.0.0.1:3456/health
 ```
 
-Create or refresh a workspace tab:
+Open a workspace:
 
 ```bash
-curl -s -X POST http://127.0.0.1:3456/capture \
-  -d '{"tabRef":"main"}'
+curl -s -X POST http://127.0.0.1:3456/workspaces
+```
+
+List the tabs for that workspace:
+
+```bash
+curl -s "http://127.0.0.1:3456/tabs?workspaceRef=workspace_demo"
+```
+
+Select a tab:
+
+```bash
+curl -s -X POST "http://127.0.0.1:3456/select-tab?workspaceRef=workspace_demo&workspaceTabRef=workspace_tab_demo"
 ```
 
 Inspect the current page:
 
 ```bash
-curl -s -X POST http://127.0.0.1:3456/query-snapshot \
-  -d '{"tabRef":"main","mode":"search","query":"Search"}'
+curl -s -X POST "http://127.0.0.1:3456/query?workspaceRef=workspace_demo" \
+  -d '{"mode":"search","query":"Search"}'
 ```
 
 Inspect the full current page snapshot:
 
 ```bash
-curl -s -X POST http://127.0.0.1:3456/query-snapshot \
-  -d '{"tabRef":"main","mode":"full"}'
+curl -s -X POST "http://127.0.0.1:3456/query?workspaceRef=workspace_demo" \
+  -d '{"mode":"full"}'
 ```
 
 Navigate:
 
 ```bash
-curl -s -X POST http://127.0.0.1:3456/navigate \
-  -d '{"tabRef":"main","url":"https://example.com"}'
+curl -s -X POST "http://127.0.0.1:3456/navigate?workspaceRef=workspace_demo" \
+  -d '{"url":"https://example.com"}'
 ```
 
 ## Active Endpoints
 
 - `GET /health`
-- `POST /capture`
+- `POST /workspaces`
+- `GET /tabs`
+- `POST /select-tab`
 - `POST /navigate`
 - `POST /click`
 - `POST /type`
 - `POST /press`
-- `POST /select-tab`
-- `POST /query-snapshot`
+- `POST /query`
 - `POST /record-knowledge`
 - `POST /shutdown`
 
 ## Request Fields
 
-- `tabRef`: logical workspace tab name
-- `snapshotRef`: daemon-generated snapshot handle for an exact stored snapshot lookup
+- `workspaceRef`: logical workspace name
+- `workspaceTabRef`: opaque tab handle inside a workspace
 - `url`: absolute navigation target for `/navigate`
 - `uid`: element handle from the latest snapshot
 - `text`: text content for `/type`
 - `key`: keyboard key for `/press`
-- `pageId`: explicit existing Chrome tab id for `/select-tab`
-- `mode`: required for `/query-snapshot`; use `search` or `full`
-- `query`, `role`, `uid`: search selectors for `/query-snapshot`
+- `mode`: required for `/query`; use `search` or `full`
+- `query`, `role`, `uid`: search selectors for `/query`
 - `guide`, `keywords`, `rationale`: durable knowledge fields for `/record-knowledge`
 
-## `query-snapshot` Usage
+## `query` Usage
 
-- `tabRef` means live query: the daemon refreshes the bound browser tab first, then runs the query against that fresh snapshot.
-- `snapshotRef` means exact query: the daemon reads the referenced stored snapshot as-is.
-- Use exactly one of `tabRef` or `snapshotRef`.
+- `workspaceRef` means live workspace access.
+- `workspaceTabRef` means an explicit tab inside the workspace.
+- Use exactly one workspace scope at a time.
 - Use `mode: "search"` when you want compact `matches`.
 - Use `mode: "full"` when you want the entire `snapshotText`.
 - With `mode: "search"`, send at least one of `query`, `role`, or `uid`.
 - With `mode: "full"`, do not send selector fields.
-- Repeating a `snapshotRef` query later does not refresh it. If you need the latest page state, query by `tabRef`.
 
 ## Runtime Truth
 
-- `browser-sessiond` is the single owner of Chrome attachment, tab bindings, snapshots, and knowledge hits.
+- `browser-sessiond` is the single owner of Chrome attachment, workspace state, snapshots, and knowledge hits.
 - `knowledgeHits` are the normal reusable-knowledge surface during a task.
 - `record-knowledge` is the only explicit durable write path.
-- Normal responses expose `snapshotRef`, not `snapshotPath`.
-- There is no active `read-knowledge` front door.
-- `uid` is the only public element handle for browser actions and `query-snapshot`.
+- Normal responses expose workspace identity and page identity, not local snapshot paths.
+- `uid` is the only public element handle for browser actions and `/query`.
 
 ## Stored Data
 

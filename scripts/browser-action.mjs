@@ -9,7 +9,7 @@ import { pageIdentityFromSnapshotText } from "./page-identity.mjs";
 import { SnapshotStore } from "./snapshot-store.mjs";
 import { WorkspaceReconciler } from "./workspace-reconciler.mjs";
 import { WorkspaceStore } from "./workspace-store.mjs";
-import { TabBindingStore } from "./tab-binding-store.mjs";
+import { WorkspaceBindingStore } from "./workspace-binding-store.mjs";
 
 const DEFAULT_SNAPSHOT_TTL_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_WORKSPACE_TAB_URL = "chrome://newtab/";
@@ -64,23 +64,23 @@ export async function runWithBrowserActionDeps(deps, run) {
 export async function openWorkspaceFlow(args, deps) {
   await deps.snapshots.cleanupExpired();
 
-  const providedTabRef = optionalNonEmptyString(args.tabRef, "tabRef");
-  const captureTarget = await resolveCaptureTarget(args, deps, providedTabRef);
+  const providedWorkspaceRef = optionalNonEmptyString(args.workspaceRef, "workspaceRef");
+  const captureTarget = await resolveWorkspaceTarget(args, deps, providedWorkspaceRef);
   const rawSnapshotText = await deps.browser.captureSnapshot();
   const snapshotText = normalizeCapturedSnapshot(captureTarget.pageListText, rawSnapshotText, captureTarget.pageId);
   const { snapshotPath } = await deps.snapshots.write(snapshotText);
   const page = pageIdentityFromSnapshotText(snapshotText);
-  const tabRef = providedTabRef ?? mintTabRef();
+  const workspaceRef = providedWorkspaceRef ?? mintWorkspaceRef();
   const workspaceState = resolveWorkspaceState(deps);
   const workspaceStateResult = await resolveWorkspaceReconciler(workspaceState).reconcileWorkspace({
-    workspaceRef: tabRef,
+    workspaceRef,
     browserTabIndex: captureTarget.pageId,
     page,
     snapshotPath,
   });
 
-  await deps.tabBindings.write({
-    tabRef,
+  await deps.workspaceBindings.write({
+    workspaceRef,
     browserTabIndex: workspaceStateResult.workspace.browserTabIndex,
     snapshotPath,
     page,
@@ -90,17 +90,16 @@ export async function openWorkspaceFlow(args, deps) {
 
   return {
     ok: true,
-    tabRef,
-    workspaceRef: tabRef,
+    workspaceRef,
     page,
     tabs: parseTabInventory(snapshotText),
     snapshotPath,
     knowledgeHits,
     summary: captureTarget.createdWorkspaceTab
-      ? `Captured a fresh snapshot and bound a new workspace tab to ${tabRef}.`
+      ? `Captured a fresh snapshot and bound a new workspace tab to ${workspaceRef}.`
       : captureTarget.reusedBinding
-        ? `Refreshed ${tabRef} with a fresh snapshot.`
-        : `Captured a fresh snapshot and bound browser tab ${captureTarget.pageId} to ${tabRef}.`,
+        ? `Refreshed ${workspaceRef} with a fresh snapshot.`
+        : `Captured a fresh snapshot and bound browser tab ${captureTarget.pageId} to ${workspaceRef}.`,
   };
 }
 
@@ -109,8 +108,8 @@ export async function runBrowserAction(input, deps) {
 }
 
 export async function runWorkspaceAction(input, deps) {
-  const tabRef = requireNonEmptyString(input.tabRef, "tabRef");
-  const binding = await readWorkspaceBinding(deps.tabBindings, tabRef);
+  const workspaceRef = requireNonEmptyString(input.workspaceRef, "workspaceRef");
+  const binding = await readWorkspaceBinding(deps.workspaceBindings, workspaceRef);
 
   if (input.preselectBoundTab !== false) {
     await selectCapturedPage(deps.browser, binding.browserTabIndex);
@@ -128,7 +127,7 @@ export async function runWorkspaceAction(input, deps) {
     input.nextBrowserTabIndex ?? binding.browserTabIndex,
   );
 
-  await deps.tabBindings.write({
+  await deps.workspaceBindings.write({
     ...binding,
     browserTabIndex,
     snapshotPath,
@@ -137,7 +136,7 @@ export async function runWorkspaceAction(input, deps) {
 
   const workspaceState = resolveWorkspaceState(deps);
   const workspaceStateResult = await resolveWorkspaceReconciler(workspaceState).reconcileWorkspace({
-    workspaceRef: tabRef,
+    workspaceRef,
     browserTabIndex,
     page,
     snapshotPath,
@@ -148,17 +147,12 @@ export async function runWorkspaceAction(input, deps) {
   return {
     ok: true,
     action: input.action,
-    tabRef,
-    workspaceRef: tabRef,
+    workspaceRef,
     page,
     snapshotPath,
     knowledgeHits,
-    summary: `${input.action} completed for ${tabRef} and captured a fresh snapshot.`,
+    summary: `${input.action} completed for ${workspaceRef} and captured a fresh snapshot.`,
   };
-}
-
-export async function runCaptureFlow(args, deps) {
-  return openWorkspaceFlow(args, deps);
 }
 
 export function parseCliIntegerArg(value, label) {
@@ -257,7 +251,7 @@ async function createDefaultBrowserActionDeps() {
 
   return {
     browser,
-    tabBindings: new TabBindingStore(path.join(roots.tempRoot, "tab-state")),
+    workspaceBindings: new WorkspaceBindingStore(path.join(roots.tempRoot, "workspace-bindings")),
     workspaceState: new WorkspaceStore(path.join(roots.tempRoot, "workspace-state")),
     snapshots: new SnapshotStore(path.join(roots.tempRoot, "snapshots"), {
       ttlMs: DEFAULT_SNAPSHOT_TTL_MS,
@@ -274,21 +268,21 @@ function resolveWorkspaceState(deps) {
     return deps.workspaceState;
   }
 
-  if (!deps.tabBindings || typeof deps.tabBindings.rootDir !== "string") {
-    throw new TypeError("workspaceState requires either deps.workspaceState or deps.tabBindings.rootDir");
+  if (!deps.workspaceBindings || typeof deps.workspaceBindings.rootDir !== "string") {
+    throw new TypeError("workspaceState requires either deps.workspaceState or deps.workspaceBindings.rootDir");
   }
 
-  return new WorkspaceStore(path.join(path.dirname(deps.tabBindings.rootDir), "workspace-state"));
+  return new WorkspaceStore(path.join(path.dirname(deps.workspaceBindings.rootDir), "workspace-state"));
 }
 
 function resolveWorkspaceReconciler(workspaceState) {
   return new WorkspaceReconciler(workspaceState);
 }
 
-async function resolveCaptureTarget(
+async function resolveWorkspaceTarget(
   args,
   deps,
-  providedTabRef,
+  providedWorkspaceRef,
 ) {
   if (typeof args.pageId === "number") {
     if (!Number.isInteger(args.pageId) || args.pageId < 0) {
@@ -302,10 +296,10 @@ async function resolveCaptureTarget(
     };
   }
 
-  if (providedTabRef) {
-    const bindingExists = await deps.tabBindings.exists(providedTabRef);
+  if (providedWorkspaceRef) {
+    const bindingExists = await deps.workspaceBindings.exists(providedWorkspaceRef);
     if (bindingExists) {
-      const existingBinding = await deps.tabBindings.read(providedTabRef);
+      const existingBinding = await deps.workspaceBindings.read(providedWorkspaceRef);
       try {
         return {
           pageId: existingBinding.browserTabIndex,
@@ -351,9 +345,9 @@ async function readKnowledgeHits(deps, origin, normalizedPath) {
   }));
 }
 
-async function readWorkspaceBinding(tabBindings, workspaceRef) {
+async function readWorkspaceBinding(workspaceBindings, workspaceRef) {
   try {
-    return await tabBindings.read(workspaceRef);
+    return await workspaceBindings.read(workspaceRef);
   } catch (error) {
     if (isMissingFileError(error)) {
       throw new Error(`Workspace ${workspaceRef} is not available; create a new workspace with POST /workspaces.`);
@@ -362,8 +356,8 @@ async function readWorkspaceBinding(tabBindings, workspaceRef) {
   }
 }
 
-function mintTabRef() {
-  return `tab_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
+function mintWorkspaceRef() {
+  return `workspace_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
 }
 
 async function resolveCapturedBrowserTabIndex(

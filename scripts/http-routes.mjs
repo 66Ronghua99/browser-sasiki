@@ -1,4 +1,12 @@
-import { HttpError, HTTP_ENDPOINTS, assertHttpRequestBody, resolveHttpEndpoint, shapeHttpPublicResult } from "./http-contract.mjs";
+import {
+  HttpError,
+  HTTP_ENDPOINTS,
+  HTTP_REQUIRED_QUERY_FIELDS,
+  HTTP_REQUEST_QUERY_FIELDS,
+  assertHttpRequestBody,
+  resolveHttpEndpoint,
+  shapeHttpPublicResultForEndpoint,
+} from "./http-contract.mjs";
 
 const MAX_REQUEST_BODY_BYTES = 1_048_576;
 
@@ -9,7 +17,7 @@ export function createHttpRouteHandler(daemon) {
 
   return async function httpRouteHandler(req, res) {
     try {
-      const { endpoint, pathname } = resolveRequestTarget(req.url ?? "");
+      const { endpoint, pathname, searchParams } = resolveRequestTarget(req.url ?? "");
       if (!endpoint) {
         return writeJson(res, 404, {
           ok: false,
@@ -29,8 +37,16 @@ export function createHttpRouteHandler(daemon) {
       const body = definition.method === "GET" ? {} : await readJsonRequestBody(req);
       assertHttpRequestBody(endpoint, body);
 
-      const result = await daemon.handleHttpRequest(endpoint, body);
-      return writeJson(res, 200, shapeHttpPublicResult(result));
+      const routedBody = mergeQueryParams(endpoint, body, searchParams);
+      const routedRequest = translateHttpRequestForDaemon(endpoint, routedBody, daemon);
+
+      if (routedRequest.preselectRequest) {
+        await daemon.handleHttpRequest("selectTab", routedRequest.preselectRequest);
+      }
+
+      const result = await daemon.handleHttpRequest(routedRequest.endpoint, routedRequest.body);
+      const publicResult = translateHttpResultFromDaemon(endpoint, result, routedBody);
+      return writeJson(res, 200, shapeHttpPublicResultForEndpoint(endpoint, publicResult));
     } catch (error) {
       return writeJson(res, httpStatusFromError(error), {
         ok: false,
@@ -46,7 +62,191 @@ function resolveRequestTarget(rawUrl) {
   return {
     endpoint,
     pathname: requestUrl.pathname,
+    searchParams: requestUrl.searchParams,
   };
+}
+
+function mergeQueryParams(endpoint, body, searchParams) {
+  const queryFields = HTTP_REQUEST_QUERY_FIELDS[endpoint] ?? [];
+  if (queryFields.length === 0) {
+    assertNoUnexpectedQueryParams(endpoint, searchParams);
+    return body;
+  }
+
+  assertNoUnexpectedQueryParams(endpoint, searchParams);
+
+  const merged = { ...body };
+  const requiredFields = HTTP_REQUIRED_QUERY_FIELDS[endpoint] ?? [];
+
+  for (const field of queryFields) {
+    const value = searchParams.get(field);
+    if (value === null || value.length === 0) {
+      if (requiredFields.includes(field)) {
+        throw new TypeError(`${field} query parameter is required for ${endpoint}`);
+      }
+      continue;
+    }
+    merged[field] = value;
+  }
+
+  for (const field of requiredFields) {
+    const value = searchParams.get(field);
+    if (value === null || value.length === 0) {
+      throw new TypeError(`${field} query parameter is required for ${endpoint}`);
+    }
+  }
+  return merged;
+}
+
+function assertNoUnexpectedQueryParams(endpoint, searchParams) {
+  const allowed = new Set(HTTP_REQUEST_QUERY_FIELDS[endpoint] ?? []);
+  const unexpectedFields = [];
+
+  for (const key of new Set(searchParams.keys())) {
+    if (!allowed.has(key)) {
+      unexpectedFields.push(key);
+    }
+  }
+
+  if (unexpectedFields.length > 0) {
+    throw new TypeError(
+      `unknown query parameter(s) for ${endpoint}: ${unexpectedFields.join(", ")}; allowed fields: ${(HTTP_REQUEST_QUERY_FIELDS[endpoint] ?? []).join(", ")}`,
+    );
+  }
+}
+
+function translateHttpRequestForDaemon(endpoint, body, daemon) {
+  switch (endpoint) {
+    case "workspaces":
+      return {
+        endpoint: "openWorkspace",
+        body: {},
+      };
+    case "tabs":
+      return {
+        endpoint: "openWorkspace",
+        body: {
+          workspaceRef: body.workspaceRef,
+        },
+      };
+    case "selectTab":
+      return {
+        endpoint: "selectTab",
+        body: {
+          workspaceRef: body.workspaceRef,
+          pageId: resolveWorkspaceTabPageId(daemon, body.workspaceRef, body.workspaceTabRef),
+        },
+      };
+    case "navigate":
+      return translateWorkspaceScopedRequest(endpoint, body, daemon, {
+        url: body.url,
+      });
+    case "click":
+      return translateWorkspaceScopedRequest(endpoint, body, daemon, {
+        uid: body.uid,
+      });
+    case "type":
+      return translateWorkspaceScopedRequest(endpoint, body, daemon, {
+        uid: body.uid,
+        text: body.text,
+        submit: body.submit,
+        slowly: body.slowly,
+      });
+    case "press":
+      return translateWorkspaceScopedRequest(endpoint, body, daemon, {
+        key: body.key,
+      });
+    case "recordKnowledge":
+      return translateWorkspaceScopedRequest(endpoint, body, daemon, {
+        guide: body.guide,
+        keywords: body.keywords,
+        rationale: body.rationale,
+      });
+    case "query":
+      return translateWorkspaceScopedRequest("queryWorkspace", body, daemon, {
+        mode: body.mode,
+        query: body.query,
+        role: body.role,
+        uid: body.uid,
+      });
+    default:
+      return {
+        endpoint,
+        body,
+      };
+  }
+}
+
+function translateHttpResultFromDaemon(endpoint, result, requestBody) {
+  if (!result || typeof result !== "object") {
+    return result;
+  }
+
+  switch (endpoint) {
+    case "workspaces":
+      return result;
+    case "tabs":
+      return {
+        ...result,
+        workspaceRef: requestBody.workspaceRef,
+      };
+    case "selectTab":
+      return {
+        ...result,
+        workspaceRef: requestBody.workspaceRef,
+        ...(requestBody.workspaceTabRef !== undefined ? { workspaceTabRef: requestBody.workspaceTabRef } : {}),
+      };
+    case "navigate":
+    case "click":
+    case "type":
+    case "press":
+    case "query":
+    case "recordKnowledge":
+      return {
+        ...result,
+        workspaceRef: requestBody.workspaceRef,
+        ...(requestBody.workspaceTabRef !== undefined ? { workspaceTabRef: requestBody.workspaceTabRef } : {}),
+      };
+    default:
+      return result;
+  }
+}
+
+function translateWorkspaceScopedRequest(endpoint, body, daemon, extraFields = {}) {
+  const request = {
+    endpoint,
+    body: omitUndefinedFields({
+      ...extraFields,
+      workspaceRef: body.workspaceRef,
+    }),
+  };
+
+  if (body.workspaceTabRef !== undefined) {
+    request.preselectRequest = {
+      workspaceRef: body.workspaceRef,
+      pageId: resolveWorkspaceTabPageId(daemon, body.workspaceRef, body.workspaceTabRef),
+    };
+  }
+
+  return request;
+}
+
+function omitUndefinedFields(value) {
+  const clone = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined) {
+      clone[key] = entry;
+    }
+  }
+  return clone;
+}
+
+function resolveWorkspaceTabPageId(daemon, workspaceRef, workspaceTabRef) {
+  if (!daemon || typeof daemon.resolveWorkspaceTabPageId !== "function") {
+    throw new TypeError("daemon must expose resolveWorkspaceTabPageId(workspaceRef, workspaceTabRef)");
+  }
+
+  return daemon.resolveWorkspaceTabPageId(workspaceRef, workspaceTabRef);
 }
 
 async function readJsonRequestBody(req) {

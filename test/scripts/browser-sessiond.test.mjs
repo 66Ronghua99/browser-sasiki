@@ -10,6 +10,15 @@ import { BrowserSessionDaemon } from "../../scripts/browser-sessiond.mjs";
 import { assertSessionMetadata } from "../../scripts/session-metadata.mjs";
 import { requestJson, startBrowserSessionDaemon } from "../../scripts/http-client.mjs";
 
+function createStubBrowserBridge() {
+  return {
+    listPages: async () => "## Pages\n- 1 (current) [Workspace](chrome://newtab/)",
+    newPage: async () => "## Pages\n- 1 (current) [Workspace](chrome://newtab/)",
+    captureSnapshot: async () => "uid=root RootWebArea \"Workspace\" url=\"chrome://newtab/\"",
+    callTool: async () => ({ content: [{ type: "text", text: "ok" }] }),
+  };
+}
+
 test("browser-sessiond treats symlinked script paths as direct-run entry", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-entry-"));
   const realEntryPath = fileURLToPath(new URL("../../scripts/browser-sessiond.mjs", import.meta.url));
@@ -32,12 +41,7 @@ test("browser-sessiond defaults to fixed HTTP port 3456", async () => {
   const daemon = new BrowserSessionDaemon({
     sessionRoot: path.join(root, "session"),
     runtimeVersion: "test-http",
-    createMcpBridge: async () => ({
-      listPages: async () => "## Pages\n- 1 (current) [Workspace](chrome://newtab/)",
-      newPage: async () => "## Pages\n- 1 (current) [Workspace](chrome://newtab/)",
-      captureSnapshot: async () => "uid=root RootWebArea \"Workspace\" url=\"chrome://newtab/\"",
-      callTool: async () => ({ content: [{ type: "text", text: "ok" }] }),
-    }),
+    createBrowserBridge: async () => createStubBrowserBridge(),
   });
 
   try {
@@ -55,6 +59,7 @@ test("browser-sessiond publishes HTTP metadata and health without socket fields"
     sessionRoot: path.join(root, "session"),
     port: 0,
     runtimeVersion: "test-http",
+    createBrowserBridge: async () => createStubBrowserBridge(),
   });
 
   try {
@@ -81,6 +86,7 @@ test("browser-sessiond shutdown closes the direct-run HTTP server", async () => 
     sessionRoot: path.join(root, "session"),
     port: 0,
     runtimeVersion: "test-http",
+    createBrowserBridge: async () => createStubBrowserBridge(),
   });
 
   try {

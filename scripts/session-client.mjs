@@ -8,10 +8,12 @@ import { fileURLToPath } from "node:url";
 
 import { requestJson } from "./http-client.mjs";
 import { assertSessionMetadata } from "./session-metadata.mjs";
+import { HTTP_ENDPOINTS, HTTP_REQUEST_QUERY_FIELDS } from "./http-contract.mjs";
 import {
-  assertSessionCaptureResult,
   assertSessionRpcRequest,
-  assertSessionRpcResult,
+  assertWorkspaceResult,
+  assertWorkspaceTabResult,
+  assertWorkspaceTabsResult,
 } from "./session-contract.mjs";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 5_000;
@@ -131,22 +133,23 @@ function isEnvelope(value) {
 }
 
 async function sendHttpSessionRequest(baseUrl, request) {
-  const endpoint = request.method === "selectTab"
-    ? "/select-tab"
-    : request.method === "querySnapshot"
-      ? "/query-snapshot"
-      : request.method === "recordKnowledge"
-        ? "/record-knowledge"
-        : request.method === "health"
-          ? "/health"
-          : request.method === "shutdown"
-            ? "/shutdown"
-            : `/${request.method}`;
-  const body = request.method === "health" || request.method === "shutdown" ? undefined : request.params;
+  const endpoint = resolveHttpEndpointName(request.method);
+  const definition = HTTP_ENDPOINTS[endpoint];
+  const url = new URL(definition.path, baseUrl);
+  const queryFields = HTTP_REQUEST_QUERY_FIELDS[endpoint] ?? [];
+  for (const field of queryFields) {
+    const value = request.params[field];
+    if (value !== undefined) {
+      url.searchParams.set(field, value);
+    }
+  }
+
+  const body = buildRequestBody(request.params, queryFields);
+  const requestBody = definition.method === "GET" ? undefined : (body ?? {});
   return requestJson(
-    request.method === "health" ? "GET" : "POST",
-    new URL(endpoint, baseUrl).href,
-    body,
+    definition.method,
+    url.href,
+    requestBody,
   );
 }
 
@@ -155,23 +158,63 @@ function validateSessionResult(method, result) {
     case "health":
       assertSessionMetadata(result);
       return result;
-    case "capture":
-      assertSessionCaptureResult(result);
+    case "openWorkspace":
+    case "listTabs":
+      assertWorkspaceTabsResult(result);
       return result;
     case "navigate":
     case "click":
     case "type":
     case "press":
-    case "selectTab":
-    case "querySnapshot":
+    case "query":
     case "recordKnowledge":
-      assertSessionRpcResult(result);
+      assertWorkspaceResult(result);
+      return result;
+    case "selectTab":
+      assertWorkspaceTabResult(result);
       return result;
     case "shutdown":
       return result;
     default:
       return result;
   }
+}
+
+function resolveHttpEndpointName(method) {
+  switch (method) {
+    case "health":
+    case "shutdown":
+      return method;
+    case "openWorkspace":
+      return "workspaces";
+    case "listTabs":
+      return "tabs";
+    case "selectTab":
+    case "navigate":
+    case "click":
+    case "type":
+    case "press":
+    case "query":
+    case "recordKnowledge":
+      return method;
+    default:
+      return method;
+  }
+}
+
+function buildRequestBody(params, queryFields) {
+  if (queryFields.length === 0) {
+    return Object.keys(params).length === 0 ? undefined : params;
+  }
+
+  const body = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (queryFields.includes(key)) {
+      continue;
+    }
+    body[key] = value;
+  }
+  return Object.keys(body).length === 0 ? undefined : body;
 }
 
 async function defaultLaunchDaemon(options) {

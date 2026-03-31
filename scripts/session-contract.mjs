@@ -1,43 +1,77 @@
 export const SESSION_RPC_METHODS = Object.freeze([
   "health",
-  "capture",
+  "openWorkspace",
+  "listTabs",
+  "selectTab",
   "navigate",
   "click",
   "type",
   "press",
-  "selectTab",
-  "querySnapshot",
+  "query",
   "recordKnowledge",
   "shutdown",
 ]);
 
 export const SESSION_RPC_REQUEST_FIELDS = Object.freeze({
   health: [],
-  capture: ["tabRef", "pageId"],
-  navigate: ["tabRef", "url"],
-  click: ["tabRef", "uid"],
-  type: ["tabRef", "uid", "text", "submit", "slowly"],
-  press: ["tabRef", "key"],
-  selectTab: ["tabRef", "pageId"],
-  querySnapshot: ["tabRef", "snapshotRef", "mode", "query", "role", "uid"],
-  recordKnowledge: ["tabRef", "snapshotRef", "page", "guide", "keywords", "rationale", "knowledgeRef"],
+  openWorkspace: [],
+  listTabs: ["workspaceRef"],
+  selectTab: ["workspaceRef", "workspaceTabRef"],
+  navigate: ["workspaceRef", "workspaceTabRef", "url"],
+  click: ["workspaceRef", "workspaceTabRef", "uid"],
+  type: ["workspaceRef", "workspaceTabRef", "uid", "text", "submit", "slowly"],
+  press: ["workspaceRef", "workspaceTabRef", "key"],
+  query: ["workspaceRef", "workspaceTabRef", "mode", "query", "role", "uid"],
+  recordKnowledge: ["workspaceRef", "workspaceTabRef", "guide", "keywords", "rationale"],
   shutdown: [],
 });
 
+export function assertWorkspaceResult(value) {
+  assertWorkspaceResultShape(value);
+}
+
+export function assertWorkspaceTabsResult(value) {
+  assertWorkspaceResultShape(value);
+  assertTabs(value.tabs);
+}
+
+export function assertWorkspaceTabResult(value) {
+  assertWorkspaceResultShape(value);
+  assertWorkspaceTabIdentity(value);
+}
+
 export function assertSessionRpcResult(value) {
-  assertSessionRuntimeRef(value);
+  assertWorkspaceTabResult(value);
+}
+
+export function assertSessionWorkspaceResult(value) {
+  assertWorkspaceResultShape(value);
+}
+
+function assertWorkspaceResultShape(value) {
+  assertRecord(value, "result");
   if (value.ok !== true) {
     throw new TypeError("ok must be true");
   }
-  assertString(value.tabRef, "tabRef");
+  assertWorkspaceIdentity(value);
+  if ("snapshotPath" in value) {
+    throw new TypeError("snapshotPath is not allowed");
+  }
+  if ("tabRef" in value) {
+    throw new TypeError("tabRef is not allowed");
+  }
+  if ("snapshotRef" in value) {
+    throw new TypeError("snapshotRef is not allowed");
+  }
+  if ("pageId" in value) {
+    throw new TypeError("pageId is not allowed");
+  }
+  if (value.knowledgeRef !== undefined) {
+    assertString(value.knowledgeRef, "knowledgeRef");
+  }
   assertPageIdentity(value.page);
   assertKnowledgeHits(value.knowledgeHits);
   assertString(value.summary, "summary");
-}
-
-export function assertSessionCaptureResult(value) {
-  assertSessionRpcResult(value);
-  assertTabs(value.tabs);
 }
 
 export function assertSessionRpcRequest(value) {
@@ -55,36 +89,32 @@ function assertSessionRpcParams(method, params) {
 
   switch (method) {
     case "health":
+    case "openWorkspace":
     case "shutdown":
       if (Object.keys(params).length > 0) {
         throw new TypeError(`${method} params must be empty`);
       }
       return;
-    case "capture":
-      if (params.tabRef !== undefined) {
-        assertString(params.tabRef, "params.tabRef");
-      }
-      if (params.pageId !== undefined) {
-        assertInteger(params.pageId, "params.pageId");
-      }
+    case "listTabs":
+      assertWorkspaceRef(params, "params");
+      return;
+    case "selectTab":
+      assertWorkspaceRef(params, "params");
+      assertRequiredWorkspaceTabRef(params, "params");
       return;
     case "navigate":
+      assertWorkspaceRef(params, "params");
+      assertOptionalWorkspaceTabRef(params, "params");
+      assertString(params.url, "params.url");
+      return;
     case "click":
-    case "press":
-    case "selectTab":
-      assertString(params.tabRef, "params.tabRef");
-      if (method === "navigate") {
-        assertString(params.url, "params.url");
-      } else if (method === "click") {
-        assertUid(params, "params");
-      } else if (method === "press") {
-        assertString(params.key, "params.key");
-      } else {
-        assertInteger(params.pageId, "params.pageId");
-      }
+      assertWorkspaceRef(params, "params");
+      assertOptionalWorkspaceTabRef(params, "params");
+      assertUid(params, "params");
       return;
     case "type":
-      assertString(params.tabRef, "params.tabRef");
+      assertWorkspaceRef(params, "params");
+      assertOptionalWorkspaceTabRef(params, "params");
       assertUid(params, "params");
       assertString(params.text, "params.text");
       if (params.submit !== undefined) {
@@ -94,16 +124,14 @@ function assertSessionRpcParams(method, params) {
         assertBoolean(params.slowly, "params.slowly");
       }
       return;
-    case "querySnapshot":
-      if ((params.tabRef === undefined) === (params.snapshotRef === undefined)) {
-        throw new TypeError("querySnapshot params must include exactly one of tabRef or snapshotRef");
-      }
-      if (params.tabRef !== undefined) {
-        assertString(params.tabRef, "params.tabRef");
-      }
-      if (params.snapshotRef !== undefined) {
-        assertString(params.snapshotRef, "params.snapshotRef");
-      }
+    case "press":
+      assertWorkspaceRef(params, "params");
+      assertOptionalWorkspaceTabRef(params, "params");
+      assertString(params.key, "params.key");
+      return;
+    case "query":
+      assertWorkspaceRef(params, "params");
+      assertOptionalWorkspaceTabRef(params, "params");
       if (params.mode === undefined) {
         throw new TypeError('params.mode must be search or full');
       }
@@ -120,24 +148,15 @@ function assertSessionRpcParams(method, params) {
         assertString(params.uid, "params.uid");
       }
       if (params.mode === "full" && (params.query !== undefined || params.role !== undefined || params.uid !== undefined)) {
-        throw new TypeError("querySnapshot full mode does not accept selector fields such as query, role, or uid");
+        throw new TypeError("query full mode does not accept selector fields such as query, role, or uid");
       }
       if (params.mode === "search" && params.query === undefined && params.role === undefined && params.uid === undefined) {
-        throw new TypeError("querySnapshot search mode requires at least one selector: query, role, or uid");
+        throw new TypeError("query search mode requires at least one selector: query, role, or uid");
       }
       return;
     case "recordKnowledge":
-      if (params.tabRef !== undefined) {
-        assertString(params.tabRef, "params.tabRef");
-      }
-      if (params.snapshotRef !== undefined) {
-        assertString(params.snapshotRef, "params.snapshotRef");
-      }
-      if (params.page !== undefined) {
-        assertSessionPageIdentity(params.page, "params.page");
-      } else if (params.tabRef === undefined && params.snapshotRef === undefined) {
-        throw new TypeError("recordKnowledge params must include page, tabRef, or snapshotRef");
-      }
+      assertWorkspaceRef(params, "params");
+      assertOptionalWorkspaceTabRef(params, "params");
       assertString(params.guide, "params.guide");
       if (!Array.isArray(params.keywords)) {
         throw new TypeError("params.keywords must be an array");
@@ -150,10 +169,12 @@ function assertSessionRpcParams(method, params) {
       }
       if (params.rationale !== undefined) {
         assertString(params.rationale, "params.rationale");
+      } else {
+        throw new TypeError("params.rationale must be provided");
       }
-      if (params.knowledgeRef !== undefined) {
-        assertString(params.knowledgeRef, "params.knowledgeRef");
-      }
+      return;
+    default:
+      return;
   }
 }
 
@@ -175,14 +196,33 @@ function assertUid(params, label) {
   assertString(params.uid, `${label}.uid`);
 }
 
-function assertSessionRuntimeRef(value) {
-  assertRecord(value, "result");
-  if ("snapshotPath" in value) {
-    throw new TypeError("snapshotPath is not allowed");
+function assertWorkspaceIdentity(value, label = "workspace") {
+  assertRecord(value, label);
+  assertString(value.workspaceRef, `${label}.workspaceRef`);
+  if (value.workspaceTabRef !== undefined) {
+    assertString(value.workspaceTabRef, `${label}.workspaceTabRef`);
   }
-  assertString(value.snapshotRef, "snapshotRef");
-  if (value.knowledgeRef !== undefined) {
-    assertString(value.knowledgeRef, "knowledgeRef");
+}
+
+function assertWorkspaceRef(value, label = "workspace") {
+  assertRecord(value, label);
+  assertString(value.workspaceRef, `${label}.workspaceRef`);
+}
+
+function assertRequiredWorkspaceTabRef(value, label = "workspace") {
+  assertRecord(value, label);
+  assertString(value.workspaceTabRef, `${label}.workspaceTabRef`);
+}
+
+function assertWorkspaceTabIdentity(value, label = "workspace") {
+  assertRecord(value, label);
+  assertString(value.workspaceTabRef, `${label}.workspaceTabRef`);
+}
+
+function assertOptionalWorkspaceTabRef(value, label = "workspace") {
+  assertRecord(value, label);
+  if (value.workspaceTabRef !== undefined) {
+    assertString(value.workspaceTabRef, `${label}.workspaceTabRef`);
   }
 }
 
@@ -222,10 +262,10 @@ function assertKnowledgeHits(value) {
 
 function assertTabInventoryItem(tab, index) {
   assertRecord(tab, `tabs[${index}]`);
-  assertInteger(tab.index, `tabs[${index}].index`);
-  if (tab.index < 0) {
-    throw new TypeError(`tabs[${index}].index must be non-negative`);
+  if ("index" in tab) {
+    throw new TypeError(`tabs[${index}].index is not allowed`);
   }
+  assertString(tab.workspaceTabRef, `tabs[${index}].workspaceTabRef`);
   assertString(tab.title, `tabs[${index}].title`);
   assertString(tab.url, `tabs[${index}].url`);
   assertBoolean(tab.active, `tabs[${index}].active`);

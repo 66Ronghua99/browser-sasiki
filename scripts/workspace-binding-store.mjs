@@ -1,24 +1,24 @@
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export class TabBindingStore {
+export class WorkspaceBindingStore {
   constructor(rootDir) {
     this.rootDir = rootDir;
   }
 
   async write(record) {
     await mkdir(this.rootDir, { recursive: true });
-    await writeFile(this.filePath(record.tabRef), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+    await writeFile(this.filePath(record.workspaceRef), `${JSON.stringify(record, null, 2)}\n`, "utf8");
   }
 
-  async read(tabRef) {
-    const raw = await readFile(this.filePath(tabRef), "utf8");
-    return parseTabBindingRecord(raw);
+  async read(workspaceRef) {
+    const raw = await readFile(this.filePath(workspaceRef), "utf8");
+    return parseWorkspaceBindingRecord(raw);
   }
 
-  async exists(tabRef) {
+  async exists(workspaceRef) {
     try {
-      await access(this.filePath(tabRef));
+      await access(this.filePath(workspaceRef));
       return true;
     } catch (error) {
       if (isMissingFileError(error)) {
@@ -28,28 +28,28 @@ export class TabBindingStore {
     }
   }
 
-  async delete(tabRef) {
-    await rm(this.filePath(tabRef), { force: true });
+  async delete(workspaceRef) {
+    await rm(this.filePath(workspaceRef), { force: true });
   }
 
-  filePath(tabRef) {
-    return path.join(this.rootDir, `${encodeURIComponent(tabRef)}.json`);
+  filePath(workspaceRef) {
+    return path.join(this.rootDir, `${encodeURIComponent(workspaceRef)}.json`);
   }
 }
 
-function parseTabBindingRecord(raw) {
+function parseWorkspaceBindingRecord(raw) {
   const value = JSON.parse(raw);
   if (!isRecord(value)) {
-    throw new TypeError("tab binding record must be an object");
+    throw new TypeError("workspace binding record must be an object");
   }
-  assertNonEmptyString(value.tabRef, "tabRef");
+  assertNonEmptyString(value.workspaceRef, "workspaceRef");
   if (!isNonNegativeInteger(value.browserTabIndex)) {
     throw new TypeError("browserTabIndex must be a non-negative integer");
   }
   assertNonEmptyString(value.snapshotPath, "snapshotPath");
   assertPageIdentity(value.page);
   return {
-    tabRef: value.tabRef,
+    workspaceRef: value.workspaceRef,
     browserTabIndex: value.browserTabIndex,
     snapshotPath: value.snapshotPath,
     page: value.page,

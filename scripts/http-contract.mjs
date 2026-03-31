@@ -1,14 +1,15 @@
 const ACTIVE_ENDPOINT_DEFINITIONS = [
-  { name: "health", method: "GET", path: "/health", fields: [] },
-  { name: "capture", method: "POST", path: "/capture", fields: ["tabRef", "pageId"] },
-  { name: "navigate", method: "POST", path: "/navigate", fields: ["tabRef", "url"] },
-  { name: "click", method: "POST", path: "/click", fields: ["tabRef", "uid"] },
-  { name: "type", method: "POST", path: "/type", fields: ["tabRef", "uid", "text", "submit", "slowly"] },
-  { name: "press", method: "POST", path: "/press", fields: ["tabRef", "key"] },
-  { name: "selectTab", method: "POST", path: "/select-tab", fields: ["tabRef", "pageId"] },
-  { name: "querySnapshot", method: "POST", path: "/query-snapshot", fields: ["tabRef", "snapshotRef", "mode", "query", "role", "uid"] },
-  { name: "recordKnowledge", method: "POST", path: "/record-knowledge", fields: ["tabRef", "snapshotRef", "page", "guide", "keywords", "rationale"] },
-  { name: "shutdown", method: "POST", path: "/shutdown", fields: [] },
+  { name: "health", method: "GET", path: "/health", bodyFields: [], queryFields: [] },
+  { name: "workspaces", method: "POST", path: "/workspaces", bodyFields: [], queryFields: [] },
+  { name: "tabs", method: "GET", path: "/tabs", bodyFields: [], queryFields: ["workspaceRef"] },
+  { name: "selectTab", method: "POST", path: "/select-tab", bodyFields: [], queryFields: ["workspaceRef", "workspaceTabRef"] },
+  { name: "navigate", method: "POST", path: "/navigate", bodyFields: ["url"], queryFields: ["workspaceRef", "workspaceTabRef"] },
+  { name: "click", method: "POST", path: "/click", bodyFields: ["uid"], queryFields: ["workspaceRef", "workspaceTabRef"] },
+  { name: "type", method: "POST", path: "/type", bodyFields: ["uid", "text", "submit", "slowly"], queryFields: ["workspaceRef", "workspaceTabRef"] },
+  { name: "press", method: "POST", path: "/press", bodyFields: ["key"], queryFields: ["workspaceRef", "workspaceTabRef"] },
+  { name: "query", method: "POST", path: "/query", bodyFields: ["mode", "query", "role", "uid"], queryFields: ["workspaceRef", "workspaceTabRef"] },
+  { name: "recordKnowledge", method: "POST", path: "/record-knowledge", bodyFields: ["guide", "keywords", "rationale"], queryFields: ["workspaceRef", "workspaceTabRef"] },
+  { name: "shutdown", method: "POST", path: "/shutdown", bodyFields: [], queryFields: [] },
 ];
 
 export const HTTP_ENDPOINT_NAMES = Object.freeze(ACTIVE_ENDPOINT_DEFINITIONS.map((definition) => definition.name));
@@ -33,9 +34,26 @@ export const HTTP_PATH_TO_ENDPOINT = Object.freeze(
 
 export const HTTP_REQUEST_FIELDS = Object.freeze(
   Object.fromEntries(
-    ACTIVE_ENDPOINT_DEFINITIONS.map((definition) => [definition.name, Object.freeze([...definition.fields])]),
+    ACTIVE_ENDPOINT_DEFINITIONS.map((definition) => [definition.name, Object.freeze([...definition.bodyFields])]),
   ),
 );
+
+export const HTTP_REQUEST_QUERY_FIELDS = Object.freeze(
+  Object.fromEntries(
+    ACTIVE_ENDPOINT_DEFINITIONS.map((definition) => [definition.name, Object.freeze([...definition.queryFields])]),
+  ),
+);
+
+export const HTTP_REQUIRED_QUERY_FIELDS = Object.freeze({
+  tabs: ["workspaceRef"],
+  selectTab: ["workspaceRef", "workspaceTabRef"],
+  navigate: ["workspaceRef"],
+  click: ["workspaceRef"],
+  type: ["workspaceRef"],
+  press: ["workspaceRef"],
+  query: ["workspaceRef"],
+  recordKnowledge: ["workspaceRef"],
+});
 
 export class HttpError extends Error {
   constructor(status, message, options = {}) {
@@ -61,34 +79,19 @@ export function assertHttpRequestBody(endpoint, body) {
 
   switch (endpoint) {
     case "health":
+    case "workspaces":
+    case "tabs":
+    case "selectTab":
     case "shutdown":
       assertEmptyObject(body, endpoint);
       return;
-    case "capture":
-      if (body.tabRef !== undefined) {
-        assertNonEmptyString(body.tabRef, "body.tabRef");
-      }
-      if (body.pageId !== undefined) {
-        assertNonNegativeInteger(body.pageId, "body.pageId");
-      }
-      return;
     case "navigate":
+      assertNonEmptyString(body.url, "body.url");
+      return;
     case "click":
-    case "press":
-    case "selectTab":
-      assertNonEmptyString(body.tabRef, "body.tabRef");
-      if (endpoint === "navigate") {
-        assertNonEmptyString(body.url, "body.url");
-      } else if (endpoint === "click") {
-        assertUid(body, "body");
-      } else if (endpoint === "press") {
-        assertNonEmptyString(body.key, "body.key");
-      } else {
-        assertNonNegativeInteger(body.pageId, "body.pageId");
-      }
+      assertUid(body, "body");
       return;
     case "type":
-      assertNonEmptyString(body.tabRef, "body.tabRef");
       assertUid(body, "body");
       assertNonEmptyString(body.text, "body.text");
       if (body.submit !== undefined) {
@@ -98,16 +101,10 @@ export function assertHttpRequestBody(endpoint, body) {
         assertBoolean(body.slowly, "body.slowly");
       }
       return;
-    case "querySnapshot":
-      if ((body.tabRef === undefined) === (body.snapshotRef === undefined)) {
-        throw new TypeError("querySnapshot body must include exactly one of tabRef or snapshotRef");
-      }
-      if (body.tabRef !== undefined) {
-        assertNonEmptyString(body.tabRef, "body.tabRef");
-      }
-      if (body.snapshotRef !== undefined) {
-        assertNonEmptyString(body.snapshotRef, "body.snapshotRef");
-      }
+    case "press":
+      assertNonEmptyString(body.key, "body.key");
+      return;
+    case "query":
       if (body.mode === undefined) {
         throw new TypeError('body.mode must be one of "search" or "full"');
       }
@@ -124,30 +121,25 @@ export function assertHttpRequestBody(endpoint, body) {
         assertNonEmptyString(body.uid, "body.uid");
       }
       if (body.mode === "full" && (body.query !== undefined || body.role !== undefined || body.uid !== undefined)) {
-        throw new TypeError("querySnapshot full mode does not accept selector fields such as query, role, or uid");
+        throw new TypeError('query body in full mode does not accept selector fields such as query, role, or uid');
       }
       if (body.mode === "search" && body.query === undefined && body.role === undefined && body.uid === undefined) {
-        throw new TypeError("querySnapshot search mode requires at least one selector: query, role, or uid");
+        throw new TypeError('query body in search mode requires at least one selector: query, role, or uid');
       }
       return;
     case "recordKnowledge":
-      if (body.page === undefined && body.tabRef === undefined && body.snapshotRef === undefined) {
-        throw new TypeError("recordKnowledge body must include page, tabRef, or snapshotRef");
+      if (body.guide === undefined) {
+        throw new TypeError("recordKnowledge body must include guide");
       }
-      if (body.page !== undefined) {
-        assertPageIdentity(body.page, "body.page");
+      if (body.keywords === undefined) {
+        throw new TypeError("recordKnowledge body must include keywords");
       }
-      if (body.tabRef !== undefined) {
-        assertNonEmptyString(body.tabRef, "body.tabRef");
-      }
-      if (body.snapshotRef !== undefined) {
-        assertNonEmptyString(body.snapshotRef, "body.snapshotRef");
+      if (body.rationale === undefined) {
+        throw new TypeError("recordKnowledge body must include rationale");
       }
       assertNonEmptyString(body.guide, "body.guide");
       assertNonEmptyStringArray(body.keywords, "body.keywords");
-      if (body.rationale !== undefined) {
-        assertNonEmptyString(body.rationale, "body.rationale");
-      }
+      assertNonEmptyString(body.rationale, "body.rationale");
       return;
     default:
       throw new TypeError(`unsupported endpoint "${endpoint}"`);
@@ -155,7 +147,17 @@ export function assertHttpRequestBody(endpoint, body) {
 }
 
 export function shapeHttpPublicResult(value) {
-  return cloneWithoutSnapshotPath(value);
+  return cloneAndStripPublicRuntimeFields(value);
+}
+
+export function shapeHttpPublicResultForEndpoint(endpoint, value) {
+  const rules = resolvePublicResultRules(endpoint);
+  if (rules === null) {
+    return cloneAndStripPublicRuntimeFields(value);
+  }
+
+  assertPublicWorkspaceResult(value, rules, endpoint);
+  return cloneAndStripPublicRuntimeFields(value);
 }
 
 function assertAllowedFields(endpoint, body) {
@@ -194,19 +196,6 @@ function assertNonEmptyString(value, label) {
   }
 }
 
-function assertInteger(value, label) {
-  if (typeof value !== "number" || !Number.isInteger(value)) {
-    throw new TypeError(`${label} must be an integer`);
-  }
-}
-
-function assertNonNegativeInteger(value, label) {
-  assertInteger(value, label);
-  if (value < 0) {
-    throw new TypeError(`${label} must be a non-negative integer`);
-  }
-}
-
 function assertBoolean(value, label) {
   if (typeof value !== "boolean") {
     throw new TypeError(`${label} must be a boolean`);
@@ -223,28 +212,111 @@ function assertNonEmptyStringArray(value, label) {
   }
 }
 
-function assertPageIdentity(value, label) {
-  assertPlainObject(value, label);
-  assertNonEmptyString(value.origin, `${label}.origin`);
-  assertNonEmptyString(value.normalizedPath, `${label}.normalizedPath`);
-  assertNonEmptyString(value.title, `${label}.title`);
-}
-
-function cloneWithoutSnapshotPath(value) {
+function cloneAndStripPublicRuntimeFields(value) {
   if (Array.isArray(value)) {
-    return value.map((entry) => cloneWithoutSnapshotPath(entry));
+    return value.map((entry) => cloneAndStripPublicRuntimeFields(entry));
   }
 
   if (value && typeof value === "object") {
     const clone = {};
     for (const [key, entry] of Object.entries(value)) {
-      if (key === "snapshotPath") {
+      if (key === "snapshotPath" || key === "tabRef" || key === "snapshotRef" || key === "index" || key === "pageId") {
         continue;
       }
-      clone[key] = cloneWithoutSnapshotPath(entry);
+      clone[key] = cloneAndStripPublicRuntimeFields(entry);
     }
     return clone;
   }
 
   return value;
+}
+
+function resolvePublicResultRules(endpoint) {
+  switch (endpoint) {
+    case "workspaces":
+      return { requireWorkspaceTabRef: false, requireTabs: true, requireTabsWorkspaceTabRef: true };
+    case "tabs":
+      return { requireWorkspaceTabRef: false, requireTabs: true, requireTabsWorkspaceTabRef: true };
+    case "selectTab":
+      return { requireWorkspaceTabRef: true, requireTabs: false, requireTabsWorkspaceTabRef: false };
+    case "navigate":
+    case "click":
+    case "type":
+    case "press":
+    case "query":
+    case "recordKnowledge":
+      return { requireWorkspaceTabRef: false, requireTabs: false, requireTabsWorkspaceTabRef: false };
+    default:
+      return null;
+  }
+}
+
+function assertPublicWorkspaceResult(value, rules, endpoint) {
+  assertPlainObject(value, "result");
+  if (value.ok !== true) {
+    throw new TypeError("ok must be true");
+  }
+  assertNonEmptyString(value.workspaceRef, "result.workspaceRef");
+
+  if (rules.requireWorkspaceTabRef) {
+    assertNonEmptyString(value.workspaceTabRef, "result.workspaceTabRef");
+  } else if (value.workspaceTabRef !== undefined) {
+    assertNonEmptyString(value.workspaceTabRef, "result.workspaceTabRef");
+  }
+
+  assertPageIdentity(value.page, endpoint);
+  assertKnowledgeHits(value.knowledgeHits, endpoint);
+  assertNonEmptyString(value.summary, "result.summary");
+
+  if (rules.requireTabs) {
+    if (!Array.isArray(value.tabs)) {
+      throw new TypeError("result.tabs must be an array");
+    }
+  }
+
+  if (Array.isArray(value.tabs)) {
+    assertTabs(value.tabs);
+  }
+}
+
+function assertPageIdentity(value, label) {
+  assertPlainObject(value, `${label}.page`);
+  assertNonEmptyString(value.origin, `${label}.page.origin`);
+  assertNonEmptyString(value.normalizedPath, `${label}.page.normalizedPath`);
+  assertNonEmptyString(value.title, `${label}.page.title`);
+}
+
+function assertKnowledgeHits(value, label) {
+  if (!Array.isArray(value)) {
+    throw new TypeError(`${label}.knowledgeHits must be an array`);
+  }
+
+  for (const [index, hit] of value.entries()) {
+    assertPlainObject(hit, `${label}.knowledgeHits[${index}]`);
+    assertNonEmptyString(hit.guide, `${label}.knowledgeHits[${index}].guide`);
+    if (!Array.isArray(hit.keywords)) {
+      throw new TypeError(`${label}.knowledgeHits[${index}].keywords must be an array`);
+    }
+    for (const [keywordIndex, keyword] of hit.keywords.entries()) {
+      assertNonEmptyString(keyword, `${label}.knowledgeHits[${index}].keywords[${keywordIndex}]`);
+    }
+    if (hit.rationale !== undefined) {
+      assertNonEmptyString(hit.rationale, `${label}.knowledgeHits[${index}].rationale`);
+    }
+  }
+}
+
+function assertTabs(value) {
+  for (const [index, tab] of value.entries()) {
+    assertPlainObject(tab, `result.tabs[${index}]`);
+    assertNonEmptyString(tab.workspaceTabRef, `result.tabs[${index}].workspaceTabRef`);
+    assertNonEmptyString(tab.title, `result.tabs[${index}].title`);
+    assertNonEmptyString(tab.url, `result.tabs[${index}].url`);
+    if (typeof tab.active !== "boolean") {
+      throw new TypeError(`result.tabs[${index}].active must be a boolean`);
+    }
+    if ("index" in tab) {
+      throw new TypeError(`result.tabs[${index}].index is not allowed`);
+    }
+  }
 }

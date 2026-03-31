@@ -5,22 +5,22 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { TabBindingStore } from "../../scripts/tab-binding-store.mjs";
+import { WorkspaceBindingStore } from "../../scripts/workspace-binding-store.mjs";
 
-test("tab binding store round-trips the latest snapshot per tabRef", async () => {
+test("workspace binding store round-trips the latest snapshot per workspaceRef", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-tabs-"));
-  const store = new TabBindingStore(path.join(root, "tab-state"));
+  const store = new WorkspaceBindingStore(path.join(root, "workspace-bindings"));
 
   await store.write({
-    tabRef: "tab_demo",
+    workspaceRef: "workspace_demo",
     browserTabIndex: 1,
     snapshotPath: "/tmp/one.md",
     page: { origin: "https://example.com", normalizedPath: "/one", title: "One" },
   });
 
-  const record = await store.read("tab_demo");
+  const record = await store.read("workspace_demo");
 
-  assert.equal(record.tabRef, "tab_demo");
+  assert.equal(record.workspaceRef, "workspace_demo");
   assert.equal(record.browserTabIndex, 1);
   assert.equal(record.snapshotPath, "/tmp/one.md");
   assert.deepEqual(record.page, {
@@ -30,14 +30,14 @@ test("tab binding store round-trips the latest snapshot per tabRef", async () =>
   });
 });
 
-test("tab binding store rejects malformed on-disk records", async () => {
+test("workspace binding store rejects malformed on-disk records", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-tabs-"));
-  const store = new TabBindingStore(path.join(root, "tab-state"));
-  await mkdir(path.join(root, "tab-state"), { recursive: true });
+  const store = new WorkspaceBindingStore(path.join(root, "workspace-bindings"));
+  await mkdir(path.join(root, "workspace-bindings"), { recursive: true });
   await writeFile(
-    path.join(root, "tab-state", "tab_demo.json"),
+    path.join(root, "workspace-bindings", "workspace_demo.json"),
     JSON.stringify({
-      tabRef: "tab_demo",
+      workspaceRef: "workspace_demo",
       browserTabIndex: 1,
       snapshotPath: "/tmp/one.md",
       page: {
@@ -49,7 +49,7 @@ test("tab binding store rejects malformed on-disk records", async () => {
   );
 
   await assert.rejects(
-    () => store.read("tab_demo"),
+    () => store.read("workspace_demo"),
     /page\.title/i
   );
 });

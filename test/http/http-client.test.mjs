@@ -8,11 +8,11 @@ test("browser skill ESM runtime chain imports without dist artifacts", async () 
     import("../../scripts/page-identity.mjs"),
     import("../../scripts/snapshot-parser.mjs"),
     import("../../scripts/snapshot-store.mjs"),
-    import("../../scripts/tab-binding-store.mjs"),
+    import("../../scripts/workspace-binding-store.mjs"),
     import("../../scripts/knowledge-store.mjs"),
     import("../../scripts/knowledge-query.mjs"),
   ]);
 
-  assert.equal(typeof modules[0].assertCaptureResult, "function");
+  assert.equal(typeof modules[0].assertWorkspaceActionResult, "function");
   assert.equal(typeof modules[7].querySnapshotText, "function");
 });

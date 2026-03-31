@@ -5,67 +5,64 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  assertActionResult,
-  assertCaptureResult,
+  assertWorkspaceActionResult,
 } from "../../scripts/types.mjs";
 import { defaultRuntimeRoots } from "../../scripts/paths.mjs";
 
-const captureBase = {
+const workspaceActionBase = {
   ok: true,
-  tabRef: "tab_demo",
+  workspaceRef: "workspace_demo",
   page: {
     origin: "https://example.com",
     normalizedPath: "/dashboard",
     title: "Dashboard",
   },
-  snapshotRef: "snapshot_demo",
   knowledgeHits: [],
-  tabs: [
-    {
-      index: 0,
-      title: "Dashboard",
-      url: "https://example.com/dashboard",
-      active: true,
-    },
-  ],
   summary: "ready",
 };
 
-test("capture result requires tabRef, snapshotRef, and page identity", () => {
+test("workspace action result requires workspaceRef and page identity", () => {
   assert.doesNotThrow(() =>
-    assertCaptureResult(captureBase)
+    assertWorkspaceActionResult({
+      ...workspaceActionBase,
+      action: "click",
+    }),
   );
 
-  assert.throws(() => assertCaptureResult({ ok: true }), /tabRef/);
+  assert.doesNotThrow(() =>
+    assertWorkspaceActionResult({
+      ...workspaceActionBase,
+      workspaceTabRef: "workspace_tab_demo",
+      action: "click",
+    }),
+  );
+
+  assert.throws(() => assertWorkspaceActionResult({ ok: true }), /workspaceRef/);
   assert.throws(
     () =>
-      assertCaptureResult({
-        ...captureBase,
-        snapshotRef: undefined,
+      assertWorkspaceActionResult({
+        ...workspaceActionBase,
+        action: "click",
+        workspaceRef: undefined,
       }),
-    /snapshotRef/
+    /workspaceRef/
   );
   assert.throws(
     () =>
-      assertCaptureResult({
-        ...captureBase,
-        tabs: undefined,
+      assertWorkspaceActionResult({
+        ...workspaceActionBase,
+        action: "drag",
       }),
-    /tabs/
+    /action/
   );
   assert.throws(
     () =>
-      assertCaptureResult({
-        ...captureBase,
-        tabs: [
-          {
-            title: "Dashboard",
-            url: "https://example.com/dashboard",
-            active: true,
-          },
-        ],
+      assertWorkspaceActionResult({
+        ...workspaceActionBase,
+        action: "click",
+        workspaceTabRef: "",
       }),
-    /index/
+    /workspaceTabRef/
   );
 });
 
@@ -102,6 +99,7 @@ test("legacy browser-skill TypeScript and runtime front doors are deleted", () =
     "../../server/http-client.mjs",
     "../../server/http-contract.mjs",
     "../../server/http-routes.mjs",
+    "../../scripts/mcp-browser-client.mjs",
     "../../server/session-client.mjs",
     "../../server/session-contract.mjs",
     "../../server/session-metadata.mjs",
@@ -117,73 +115,92 @@ test("legacy browser-skill TypeScript and runtime front doors are deleted", () =
   }
 });
 
-test("mutation result requires explicit base fields and rejects invalid actions", () => {
-  assert.throws(
-    () => assertActionResult({ ok: true, action: "click" }),
-    /tabRef/
-  );
+test("workspace action validator rejects invalid actions", () => {
   assert.throws(
     () =>
-      assertActionResult({
-        ok: true,
-        tabRef: "tab_demo",
-        page: captureBase.page,
-        snapshotRef: "snapshot_demo",
-        knowledgeHits: [],
-        summary: "ready",
+      assertWorkspaceActionResult({
+        ...workspaceActionBase,
         action: "drag",
       }),
     /action/
   );
+  assert.throws(
+    () =>
+      assertWorkspaceActionResult({
+        ok: true,
+        workspaceRef: "workspace_demo",
+        page: workspaceActionBase.page,
+        knowledgeHits: [],
+        summary: "ready",
+        action: "click",
+        workspaceTabRef: 123,
+      }),
+    /workspaceTabRef/
+  );
   assert.doesNotThrow(() =>
-    assertActionResult({
+    assertWorkspaceActionResult({
       ok: true,
-      tabRef: "tab_demo",
-      page: captureBase.page,
-      snapshotRef: "snapshot_demo",
+      workspaceRef: "workspace_demo",
+      page: workspaceActionBase.page,
       knowledgeHits: [],
       summary: "ready",
       action: "click",
     })
   );
+  assert.doesNotThrow(() =>
+    assertWorkspaceActionResult({
+      ok: true,
+      workspaceRef: "workspace_demo",
+      page: workspaceActionBase.page,
+      knowledgeHits: [],
+      summary: "ready",
+      action: "select-tab",
+      workspaceTabRef: "workspace_tab_demo",
+    })
+  );
   assert.throws(
     () =>
-      assertActionResult({
+      assertWorkspaceActionResult({
         ok: true,
-        tabRef: "tab_demo",
-        page: captureBase.page,
-        snapshotRef: "snapshot_demo",
-        snapshotPath: "/tmp/legacy.md",
+        workspaceRef: "workspace_demo",
+        page: workspaceActionBase.page,
         knowledgeHits: [],
         summary: "ready",
-        action: "click",
+        action: "select-tab",
+        workspaceTabRef: 123,
       }),
-    /snapshotPath/
+    /workspaceTabRef/
   );
 });
 
-test("SKILL front door teaches curl-based http usage, automatic knowledge hits, and no read-knowledge path", async () => {
+test("front-door docs teach the workspace-first direct-DevTools surface and exclude legacy public terms", async () => {
   const skillPath = fileURLToPath(new URL("../../SKILL.md", import.meta.url));
-  const content = await readFile(skillPath, "utf8");
+  const readmePath = fileURLToPath(new URL("../../README.md", import.meta.url));
+  const [skillContent, readmeContent] = await Promise.all([
+    readFile(skillPath, "utf8"),
+    readFile(readmePath, "utf8"),
+  ]);
 
-  assert.match(content, /## Before You Start/i);
-  assert.match(content, /## Decide The Next Call/i);
-  assert.match(content, /## Parameter Guide/i);
-  assert.match(content, /## Common Failure Mode/i);
-  assert.match(content, /curl -s .*\/health/i);
-  assert.match(content, /curl -s -X POST .*\/capture/i);
-  assert.match(content, /node (skill\/)?scripts\/browser-sessiond\.mjs/i);
-  assert.match(content, /knowledgeHits auto-load/i);
-  assert.match(content, /`tabRef`.*live|live.*`tabRef`/i);
-  assert.match(content, /`snapshotRef`.*exact|exact.*`snapshotRef`/i);
-  assert.match(content, /`search`.*`full`|`full`.*`search`/i);
-  assert.match(content, /`uid` is the only/i);
-  assert.match(content, /Do not send `ref`/i);
-  assert.match(content, /there is no `\/browser-run-code` endpoint/i);
-  assert.match(content, /must successfully call `record-knowledge` before the final answer/i);
-  assert.doesNotMatch(content, /read-knowledge/i);
-  assert.doesNotMatch(content, /`auto`/i);
-  assert.doesNotMatch(content, /accept .*`ref`|`ref` as a/i);
-  assert.doesNotMatch(content, /skill\/server\//i);
-  assert.doesNotMatch(content, /dist\/scripts/i);
+  for (const content of [skillContent, readmeContent]) {
+    assert.match(content, /workspace-first/i);
+    assert.match(content, /direct DevTools/i);
+    assert.match(content, /GET \/health/i);
+    assert.match(content, /POST \/workspaces/i);
+    assert.match(content, /GET \/tabs/i);
+    assert.match(content, /POST \/select-tab/i);
+    assert.match(content, /POST \/navigate/i);
+    assert.match(content, /POST \/query/i);
+    assert.match(content, /POST \/record-knowledge/i);
+    assert.match(content, /workspaceRef/i);
+    assert.match(content, /workspaceTabRef/i);
+    assert.match(content, /`uid` is the only/i);
+    assert.match(content, /`search`.*`full`|`full`.*`search`/i);
+    assert.match(content, /knowledgeHits/i);
+    assert.doesNotMatch(content, /\/capture/i);
+    assert.doesNotMatch(content, /\/query-snapshot/i);
+    assert.doesNotMatch(content, /`tabRef`/i);
+    assert.doesNotMatch(content, /`snapshotRef`/i);
+    assert.doesNotMatch(content, /chrome-devtools-mcp/i);
+    assert.doesNotMatch(content, /read-knowledge/i);
+  }
 });

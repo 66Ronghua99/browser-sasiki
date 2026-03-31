@@ -4,12 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { runCaptureFlow } from "../../scripts/browser-action.mjs";
+import { openWorkspaceFlow } from "../../scripts/browser-action.mjs";
 import { KnowledgeStore } from "../../scripts/knowledge-store.mjs";
 import { SnapshotStore } from "../../scripts/snapshot-store.mjs";
-import { TabBindingStore } from "../../scripts/tab-binding-store.mjs";
+import { WorkspaceStore } from "../../scripts/workspace-store.mjs";
+import { WorkspaceBindingStore } from "../../scripts/workspace-binding-store.mjs";
 
-test("capture creates a new workspace tab for a first-time tabRef", async () => {
+test("openWorkspaceFlow reconciles live browser state into the cached workspace state", async () => {
   const harness = await createHarness({
     openWorkspaceTab: async () => ({
       pageId: 7,
@@ -29,26 +30,98 @@ test("capture creates a new workspace tab for a first-time tabRef", async () => 
     captureSnapshot: async () =>
       "## Latest page snapshot\nuid=7_0 RootWebArea \"Workspace\" url=\"https://example.com/workspace\"",
     readActiveTabIndex: async () => {
-      throw new Error("readActiveTabIndex should not be used for a first-time workspace capture");
+      throw new Error("readActiveTabIndex should not be used for a workspace open flow");
     },
   });
 
   try {
-    const result = await runCaptureFlow({ tabRef: "agent_main" }, harness.deps);
+    await harness.workspaceState.writeWorkspace({
+      workspaceRef: "agent_main",
+      activeWorkspaceTabRef: "workspace_tab_cached",
+      browserTabIndex: 99,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/stale",
+        title: "Stale",
+      },
+      snapshotPath: "/tmp/stale-snapshot.md",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
+    });
+
+    await harness.workspaceState.writeWorkspaceTab({
+      workspaceRef: "agent_main",
+      workspaceTabRef: "workspace_tab_cached",
+      browserTabIndex: 99,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/stale",
+        title: "Stale",
+      },
+      snapshotPath: "/tmp/stale-snapshot.md",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
+    });
+
+    const result = await openWorkspaceFlow({ workspaceRef: "agent_main" }, harness.deps);
+
+    assert.equal(harness.openWorkspaceTabCalls, 1);
+    assert.equal(result.workspaceRef, "agent_main");
+    assert.equal(result.tabRef, undefined);
+    assert.equal(result.page.normalizedPath, "/workspace");
+
+    const workspace = await harness.workspaceState.readWorkspace("agent_main");
+    const workspaceTab = await harness.workspaceState.readWorkspaceTab("agent_main", "workspace_tab_cached");
+    assert.equal(workspace.browserTabIndex, 7);
+    assert.equal(workspace.page.normalizedPath, "/workspace");
+    assert.equal(workspaceTab.browserTabIndex, 7);
+    assert.equal(workspaceTab.page.normalizedPath, "/workspace");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("openWorkspaceFlow creates a new workspace tab for a first-time workspaceRef", async () => {
+  const harness = await createHarness({
+    openWorkspaceTab: async () => ({
+      pageId: 7,
+      pageListText: "## Pages\n7: https://example.com/workspace [selected]",
+    }),
+    callBrowserTool: async (name, args) => {
+      harness.browserCalls.push({ name, args });
+      return {
+        content: [
+          {
+            type: "text",
+            text: "## Pages\n7: https://example.com/workspace [selected]",
+          },
+        ],
+      };
+    },
+    captureSnapshot: async () =>
+      "## Latest page snapshot\nuid=7_0 RootWebArea \"Workspace\" url=\"https://example.com/workspace\"",
+    readActiveTabIndex: async () => {
+      throw new Error("readActiveTabIndex should not be used for a first-time workspace open flow");
+    },
+  });
+
+  try {
+    const result = await openWorkspaceFlow({ workspaceRef: "agent_main" }, harness.deps);
 
     assert.equal(harness.openWorkspaceTabCalls, 1);
     assert.deepEqual(harness.browserCalls, []);
-    assert.equal(result.tabRef, "agent_main");
+    assert.equal(result.workspaceRef, "agent_main");
+    assert.equal(result.tabRef, undefined);
     assert.match(result.summary, /workspace tab/i);
 
-    const binding = await harness.tabBindings.read("agent_main");
+    const binding = await harness.workspaceBindings.read("agent_main");
     assert.equal(binding.browserTabIndex, 7);
   } finally {
     await harness.cleanup();
   }
 });
 
-test("capture refreshes an existing tabRef binding without opening another workspace tab", async () => {
+test("openWorkspaceFlow refreshes an existing workspaceRef binding without opening another workspace tab", async () => {
   const harness = await createHarness({
     openWorkspaceTab: async () => ({
       pageId: 9,
@@ -73,8 +146,8 @@ test("capture refreshes an existing tabRef binding without opening another works
   });
 
   try {
-    await harness.tabBindings.write({
-      tabRef: "agent_main",
+    await harness.workspaceBindings.write({
+      workspaceRef: "agent_main",
       browserTabIndex: 4,
       snapshotPath: "/tmp/previous-snapshot.md",
       page: {
@@ -84,7 +157,7 @@ test("capture refreshes an existing tabRef binding without opening another works
       },
     });
 
-    const result = await runCaptureFlow({ tabRef: "agent_main" }, harness.deps);
+    const result = await openWorkspaceFlow({ workspaceRef: "agent_main" }, harness.deps);
 
     assert.equal(harness.openWorkspaceTabCalls, 0);
     assert.deepEqual(harness.browserCalls, [
@@ -92,7 +165,7 @@ test("capture refreshes an existing tabRef binding without opening another works
         name: "select_page",
         args: {
           pageId: 4,
-          bringToFront: true,
+          bringToFront: false,
         },
       },
     ]);
@@ -102,7 +175,7 @@ test("capture refreshes an existing tabRef binding without opening another works
   }
 });
 
-test("capture rebinds a stale tabRef when the previously selected page no longer exists", async () => {
+test("openWorkspaceFlow rebinds a stale workspaceRef when the previously selected page no longer exists", async () => {
   const harness = await createHarness({
     openWorkspaceTab: async () => ({
       pageId: 8,
@@ -111,7 +184,7 @@ test("capture rebinds a stale tabRef when the previously selected page no longer
     callBrowserTool: async (name, args) => {
       harness.browserCalls.push({ name, args });
       if (name === "select_page") {
-        throw new Error("select_page returned an MCP error result: No page found");
+        throw new Error("No page found for pageId 25");
       }
       return {
         content: [
@@ -125,13 +198,13 @@ test("capture rebinds a stale tabRef when the previously selected page no longer
     captureSnapshot: async () =>
       "## Latest page snapshot\nuid=8_0 RootWebArea \"Rebound\" url=\"https://example.com/rebound\"",
     readActiveTabIndex: async () => {
-      throw new Error("readActiveTabIndex should not be used when rebinding a stale tabRef");
+      throw new Error("readActiveTabIndex should not be used when rebinding a stale workspaceRef");
     },
   });
 
   try {
-    await harness.tabBindings.write({
-      tabRef: "x-work",
+    await harness.workspaceBindings.write({
+      workspaceRef: "x-work",
       browserTabIndex: 25,
       snapshotPath: "/tmp/previous-snapshot.md",
       page: {
@@ -141,7 +214,7 @@ test("capture rebinds a stale tabRef when the previously selected page no longer
       },
     });
 
-    const result = await runCaptureFlow({ tabRef: "x-work" }, harness.deps);
+    const result = await openWorkspaceFlow({ workspaceRef: "x-work" }, harness.deps);
 
     assert.equal(harness.openWorkspaceTabCalls, 1);
     assert.deepEqual(harness.browserCalls, [
@@ -149,14 +222,15 @@ test("capture rebinds a stale tabRef when the previously selected page no longer
         name: "select_page",
         args: {
           pageId: 25,
-          bringToFront: true,
+          bringToFront: false,
         },
       },
     ]);
-    assert.equal(result.tabRef, "x-work");
+    assert.equal(result.workspaceRef, "x-work");
+    assert.equal(result.tabRef, undefined);
     assert.match(result.summary, /workspace tab/i);
 
-    const binding = await harness.tabBindings.read("x-work");
+    const binding = await harness.workspaceBindings.read("x-work");
     assert.equal(binding.browserTabIndex, 8);
     assert.equal(binding.page.normalizedPath, "/rebound");
   } finally {
@@ -164,7 +238,7 @@ test("capture rebinds a stale tabRef when the previously selected page no longer
   }
 });
 
-test("capture loads knowledge hits for the captured page identity", async () => {
+test("openWorkspaceFlow loads knowledge hits for the captured page identity", async () => {
   const harness = await createHarness(
     {
       openWorkspaceTab: async () => ({
@@ -201,7 +275,7 @@ test("capture loads knowledge hits for the captured page identity", async () => 
   );
 
   try {
-    const result = await runCaptureFlow({ tabRef: "agent_main" }, harness.deps);
+    const result = await openWorkspaceFlow({ workspaceRef: "agent_main" }, harness.deps);
 
     assert.equal(result.knowledgeHits.length, 1);
     assert.equal(result.knowledgeHits[0]?.guide, "The primary CTA is in the workspace header.");
@@ -213,7 +287,8 @@ test("capture loads knowledge hits for the captured page identity", async () => 
 
 async function createHarness(runtime, options = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-action-"));
-  const tabBindings = new TabBindingStore(path.join(root, "tab-state"));
+  const workspaceBindings = new WorkspaceBindingStore(path.join(root, "workspace-bindings"));
+  const workspaceState = new WorkspaceStore(path.join(root, "workspace-state"));
   const snapshots = new SnapshotStore(path.join(root, "snapshots"), {
     ttlMs: 60_000,
   });
@@ -231,7 +306,8 @@ async function createHarness(runtime, options = {}) {
           return runtime.openWorkspaceTab();
         },
       },
-      tabBindings,
+      workspaceBindings,
+      workspaceState,
       snapshots,
       knowledge: {
         queryByPage: async (page) =>
@@ -241,7 +317,8 @@ async function createHarness(runtime, options = {}) {
           ),
       },
     },
-    tabBindings,
+    workspaceBindings,
+    workspaceState,
     browserCalls,
     get openWorkspaceTabCalls() {
       return openWorkspaceTabCalls;

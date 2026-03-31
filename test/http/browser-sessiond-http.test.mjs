@@ -218,6 +218,38 @@ test("browser-sessiond bridges workspace-first listing and tab-selection HTTP on
   }
 });
 
+test("browser-sessiond query full only returns workspace-local open tabs in the public snapshot envelope", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const bridge = createFakeBrowserBridge();
+  const { daemon, metadata } = await startBrowserSessionDaemon({
+    sessionRoot: path.join(root, "session"),
+    port: 0,
+    runtimeVersion: "test-http",
+    runtimeRoots: createIsolatedRuntimeRoots(root),
+    createBrowserBridge: async () => bridge,
+  });
+
+  try {
+    const workspaces = await requestJson("POST", `${metadata.baseUrl}/workspaces`, {});
+    const fullQuery = await requestJson(
+      "POST",
+      `${metadata.baseUrl}/query?workspaceRef=${workspaces.workspaceRef}`,
+      {
+        mode: "full",
+      },
+    );
+
+    assert.equal(fullQuery.ok, true);
+    assert.equal(fullQuery.workspaceRef, workspaces.workspaceRef);
+    assert.match(fullQuery.snapshotText, /### Open tabs/);
+    assert.match(fullQuery.snapshotText, /Workspace/);
+    assert.doesNotMatch(fullQuery.snapshotText, /Details/);
+  } finally {
+    await daemon.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("browser-sessiond stale workspace failures stay on workspace-first language after a session reset", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
   const runtimeRoots = createIsolatedRuntimeRoots(root);

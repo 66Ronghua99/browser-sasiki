@@ -4,13 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { runCaptureFlow } from "../../scripts/browser-action.mjs";
+import { openWorkspaceFlow } from "../../scripts/browser-action.mjs";
 import { KnowledgeStore } from "../../scripts/knowledge-store.mjs";
 import { SnapshotStore } from "../../scripts/snapshot-store.mjs";
-import { TabBindingStore } from "../../scripts/tab-binding-store.mjs";
+import { WorkspaceBindingStore } from "../../scripts/workspace-binding-store.mjs";
 
-test("runCaptureFlow reuses the selected new_page result for a fresh workspace tab instead of re-selecting it", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-capture-flow-"));
+test("openWorkspaceFlow reuses the selected new_page result for a fresh workspace tab instead of re-selecting it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-workspace-flow-"));
   const browserCalls = [];
   const newPageListText = [
     "## Pages",
@@ -45,11 +45,11 @@ test("runCaptureFlow reuses the selected new_page result for a fresh workspace t
     },
   };
 
-  const result = await runCaptureFlow(
-    { tabRef: "x-work" },
+  const result = await openWorkspaceFlow(
+    { workspaceRef: "x-work" },
     {
       browser,
-      tabBindings: new TabBindingStore(path.join(root, "tab-state")),
+      workspaceBindings: new WorkspaceBindingStore(path.join(root, "workspace-bindings")),
       snapshots: new SnapshotStore(path.join(root, "snapshots"), {
         ttlMs: 60_000,
       }),
@@ -59,7 +59,8 @@ test("runCaptureFlow reuses the selected new_page result for a fresh workspace t
 
   assert.equal(browserCalls.length, 0);
   assert.equal(result.ok, true);
-  assert.equal(result.tabRef, "x-work");
+  assert.equal(result.workspaceRef, "x-work");
+  assert.equal(result.tabRef, undefined);
   assert.equal(result.page.title, "New Tab");
   assert.equal(result.tabs.find((tab) => tab.active)?.index, 2);
 });

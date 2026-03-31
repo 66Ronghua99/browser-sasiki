@@ -1,10 +1,17 @@
-export function assertCaptureResult(result) {
+export function assertWorkspaceResult(result) {
+  assertBaseResult(result);
+}
+
+export function assertWorkspaceTabsResult(result) {
   assertBaseResult(result);
   assertTabs(result.tabs);
 }
 
-export function assertActionResult(result) {
+export function assertWorkspaceActionResult(result) {
   assertBaseResult(result);
+  if (result.workspaceTabRef !== undefined) {
+    assertString(result.workspaceTabRef, "workspaceTabRef");
+  }
   const action = result.action;
   if (
     action !== "navigate" &&
@@ -26,6 +33,13 @@ function assertRecord(value, label) {
 function assertString(value, label) {
   if (typeof value !== "string" || value.length === 0) {
     throw new TypeError(`${label} must be a non-empty string`);
+  }
+}
+
+function assertWorkspaceIdentity(result) {
+  assertString(result.workspaceRef, "workspaceRef");
+  if (result.workspaceTabRef !== undefined) {
+    assertString(result.workspaceTabRef, "workspaceTabRef");
   }
 }
 
@@ -60,12 +74,20 @@ function assertBaseResult(result) {
   if (result.ok !== true) {
     throw new TypeError("ok must be true");
   }
-  assertString(result.tabRef, "tabRef");
+  assertWorkspaceIdentity(result);
   assertPageIdentity(result.page);
   if ("snapshotPath" in result) {
     throw new TypeError("snapshotPath is not allowed");
   }
-  assertString(result.snapshotRef, "snapshotRef");
+  if ("tabRef" in result) {
+    throw new TypeError("tabRef is not allowed");
+  }
+  if ("snapshotRef" in result) {
+    throw new TypeError("snapshotRef is not allowed");
+  }
+  if ("pageId" in result) {
+    throw new TypeError("pageId is not allowed");
+  }
   if (result.knowledgeRef !== undefined) {
     assertString(result.knowledgeRef, "knowledgeRef");
   }
@@ -75,9 +97,10 @@ function assertBaseResult(result) {
 
 function assertTabInventoryItem(tab, index) {
   assertRecord(tab, `tabs[${index}]`);
-  if (typeof tab.index !== "number" || !Number.isInteger(tab.index) || tab.index < 0) {
-    throw new TypeError(`tabs[${index}].index must be a non-negative integer`);
+  if ("index" in tab) {
+    throw new TypeError(`tabs[${index}].index is not allowed`);
   }
+  assertString(tab.workspaceTabRef, `tabs[${index}].workspaceTabRef`);
   assertString(tab.title, `tabs[${index}].title`);
   assertString(tab.url, `tabs[${index}].url`);
   if (typeof tab.active !== "boolean") {
