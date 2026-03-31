@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { TabBindingStore } from "../../lib/tab-binding-store.js";
+import { TabBindingStore } from "../../lib/tab-binding-store.mjs";
 
 test("tab binding store round-trips the latest snapshot per tabRef", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-tabs-"));

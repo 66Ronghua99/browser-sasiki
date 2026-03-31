@@ -1,4 +1,4 @@
-import type { KnowledgeHit, SkillPageIdentity, SkillTabInventoryItem } from "../lib/types.js";
+import type { KnowledgeHit, SkillPageIdentity, SkillTabInventoryItem } from "../lib/types.mjs";
 
 export const SESSION_RPC_METHODS = [
   "health",
@@ -9,7 +9,6 @@ export const SESSION_RPC_METHODS = [
   "press",
   "selectTab",
   "querySnapshot",
-  "readKnowledge",
   "recordKnowledge",
   "shutdown",
 ] as const;
@@ -21,11 +20,10 @@ export const SESSION_RPC_REQUEST_FIELDS = {
   capture: ["tabRef", "pageId"],
   navigate: ["tabRef", "url"],
   click: ["tabRef", "uid"],
-  type: ["tabRef", "uid", "text"],
+  type: ["tabRef", "uid", "text", "submit", "slowly"],
   press: ["tabRef", "key"],
   selectTab: ["tabRef", "pageId"],
   querySnapshot: ["tabRef", "snapshotRef", "mode", "query", "role", "uid"],
-  readKnowledge: ["tabRef", "snapshotRef", "knowledgeRef", "page"],
   recordKnowledge: ["tabRef", "snapshotRef", "page", "guide", "keywords", "rationale", "knowledgeRef"],
   shutdown: [],
 } as const satisfies Record<SessionRpcMethod, readonly string[]>;
@@ -67,12 +65,6 @@ export interface SessionRpcRequestMap {
     role?: string;
     uid?: string;
   };
-  readKnowledge: {
-    tabRef?: string;
-    snapshotRef?: string;
-    knowledgeRef?: string;
-    page?: SkillPageIdentity;
-  };
   recordKnowledge: {
     tabRef?: string;
     snapshotRef?: string;
@@ -93,7 +85,6 @@ export interface SessionRpcRequestEnvelope<M extends SessionRpcMethod = SessionR
 
 export interface SessionRuntimeRef {
   snapshotRef: string;
-  snapshotPath: string;
   knowledgeRef?: string;
 }
 
@@ -180,8 +171,10 @@ function assertTabs(value: unknown): asserts value is SkillTabInventoryItem[] {
 
 function assertSessionRuntimeRef(value: unknown): asserts value is SessionRuntimeRef {
   assertRecord(value, "result");
+  if ("snapshotPath" in value) {
+    throw new TypeError("snapshotPath is not allowed");
+  }
   assertString(value.snapshotRef, "snapshotRef");
-  assertString(value.snapshotPath, "snapshotPath");
   if (value.knowledgeRef !== undefined) {
     assertString(value.knowledgeRef, "knowledgeRef");
   }
@@ -278,23 +271,6 @@ function assertSessionRpcParams(method: SessionRpcMethod, params: unknown): asse
         assertString(params.uid, "params.uid");
       }
       return;
-    case "readKnowledge":
-      if (params.tabRef === undefined && params.snapshotRef === undefined && params.knowledgeRef === undefined && params.page === undefined) {
-        throw new TypeError("readKnowledge params must include a lookup hint");
-      }
-      if (params.tabRef !== undefined) {
-        assertString(params.tabRef, "params.tabRef");
-      }
-      if (params.snapshotRef !== undefined) {
-        assertString(params.snapshotRef, "params.snapshotRef");
-      }
-      if (params.knowledgeRef !== undefined) {
-        assertString(params.knowledgeRef, "params.knowledgeRef");
-      }
-      if (params.page !== undefined) {
-        assertSessionPageIdentity(params.page, "params.page");
-      }
-      return;
     case "recordKnowledge":
       if (params.tabRef !== undefined) {
         assertString(params.tabRef, "params.tabRef");
@@ -304,13 +280,8 @@ function assertSessionRpcParams(method: SessionRpcMethod, params: unknown): asse
       }
       if (params.page !== undefined) {
         assertSessionPageIdentity(params.page, "params.page");
-      } else if (
-        params.tabRef === undefined &&
-        params.snapshotRef === undefined
-      ) {
-        throw new TypeError(
-          "recordKnowledge params must include page, tabRef, or snapshotRef",
-        );
+      } else if (params.tabRef === undefined && params.snapshotRef === undefined) {
+        throw new TypeError("recordKnowledge params must include page, tabRef, or snapshotRef");
       }
       assertString(params.guide, "params.guide");
       if (!Array.isArray(params.keywords)) {

@@ -4,18 +4,28 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { runCaptureFlow, type BrowserRuntime } from "../../lib/browser-action.js";
-import { KnowledgeStore } from "../../lib/knowledge-store.js";
-import { SnapshotStore } from "../../lib/snapshot-store.js";
-import { TabBindingStore } from "../../lib/tab-binding-store.js";
+import { runCaptureFlow } from "../../lib/browser-action.mjs";
+import { KnowledgeStore } from "../../lib/knowledge-store.mjs";
+import { SnapshotStore } from "../../lib/snapshot-store.mjs";
+import { TabBindingStore } from "../../lib/tab-binding-store.mjs";
+
+interface BrowserRuntime {
+  captureSnapshot(): Promise<string>;
+  callBrowserTool(name: string, args: Record<string, unknown>): Promise<unknown>;
+  readActiveTabIndex(): Promise<number>;
+  openWorkspaceTab(): Promise<{
+    pageId: number;
+    pageListText: string;
+  }>;
+}
 
 test("runCaptureFlow reuses the selected new_page result for a fresh workspace tab instead of re-selecting it", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-capture-flow-"));
   const browserCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const newPageListText = [
     "## Pages",
-    "1: https://example.com/home",
-    "2: chrome://new-tab-page/ [selected]",
+    "- 1 [Home](https://example.com/home)",
+    "- 2 [New Tab](chrome://new-tab-page/) (current)",
   ].join("\n");
   const rawSnapshotText = [
     "## Latest page snapshot",

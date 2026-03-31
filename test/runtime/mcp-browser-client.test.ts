@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { McpBrowserClient } from "../../lib/mcp-browser-client.js";
-import { resolveBrowserMcpLaunchOptions } from "../../lib/browser-action.js";
+import { McpBrowserClient } from "../../lib/mcp-browser-client.mjs";
+import { resolveBrowserMcpLaunchOptions } from "../../lib/browser-action.mjs";
 
 interface ToolDefinition {
   name: string;

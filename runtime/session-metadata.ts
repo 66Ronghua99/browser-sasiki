@@ -1,6 +1,7 @@
 export const SESSION_METADATA_KEYS = [
   "pid",
-  "socketPath",
+  "port",
+  "baseUrl",
   "browserUrl",
   "connectionMode",
   "startedAt",
@@ -10,11 +11,12 @@ export const SESSION_METADATA_KEYS = [
 
 export type SessionMetadataKey = (typeof SESSION_METADATA_KEYS)[number];
 
-export type SessionConnectionMode = "browserUrl" | "autoConnect";
+export type SessionConnectionMode = "http" | "browserUrl" | "autoConnect" | null;
 
 export interface SessionMetadata {
   pid: number;
-  socketPath: string;
+  port: number;
+  baseUrl: string;
   browserUrl: string | null;
   connectionMode: SessionConnectionMode;
   startedAt: string;
@@ -40,12 +42,23 @@ export function assertSessionMetadata(value: unknown): asserts value is SessionM
   if (typeof value.pid !== "number" || !Number.isInteger(value.pid) || value.pid <= 0) {
     throw new TypeError("pid must be a positive integer");
   }
-  assertString(value.socketPath, "socketPath");
+  if ("socketPath" in value) {
+    throw new TypeError("socketPath is not allowed");
+  }
+  if (typeof value.port !== "number" || !Number.isInteger(value.port) || value.port <= 0) {
+    throw new TypeError("port must be a positive integer");
+  }
+  assertString(value.baseUrl, "baseUrl");
   if (value.browserUrl !== null) {
     assertString(value.browserUrl, "browserUrl");
   }
-  if (value.connectionMode !== "browserUrl" && value.connectionMode !== "autoConnect") {
-    throw new TypeError("connectionMode must be browserUrl or autoConnect");
+  if (
+    value.connectionMode !== null
+    && value.connectionMode !== "browserUrl"
+    && value.connectionMode !== "http"
+    && value.connectionMode !== "autoConnect"
+  ) {
+    throw new TypeError("connectionMode must be browserUrl, http, autoConnect, or null");
   }
   if (value.connectionMode === "browserUrl" && value.browserUrl === null) {
     throw new TypeError("browserUrl must be set when connectionMode is browserUrl");

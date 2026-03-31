@@ -1,14 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { access, readFile, rm, stat } from "node:fs/promises";
-import fs from "node:fs";
+import { readFile, rm, stat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { defaultRuntimeRoots } from "../lib/paths.js";
+import { requestJson } from "../server/http-client.mjs";
 import { assertSessionMetadata, type SessionMetadata } from "./session-metadata.js";
-import { resolveSessionSocketPath } from "./session-paths.js";
 import {
   assertSessionCaptureResult,
   assertSessionRpcRequest,
@@ -19,8 +18,6 @@ import {
   type SessionRpcRequestMap,
   type SessionRpcResultBase,
 } from "./session-rpc-types.js";
-import { sendSocketRequest } from "./socket-client.js";
-import type { BrowserSessionDaemonOptions } from "./browser-sessiond.js";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 5_000;
 const DEFAULT_RUNTIME_VERSION = "0.1.0";
@@ -29,7 +26,6 @@ const injectedSessionCache = new Map<string, SessionMetadata>();
 interface SessionPaths {
   sessionRoot: string;
   metadataPath: string;
-  socketPath: string;
 }
 
 export interface SessionClientOptions {
@@ -37,7 +33,13 @@ export interface SessionClientOptions {
   sessionRoot?: string;
   runtimeVersion?: string;
   startupTimeoutMs?: number;
-  launchDaemon?: (options: BrowserSessionDaemonOptions) => Promise<void>;
+  launchDaemon?: (options: SessionDaemonLaunchOptions) => Promise<void>;
+}
+
+export interface SessionDaemonLaunchOptions {
+  env?: Record<string, string | undefined>;
+  sessionRoot?: string;
+  runtimeVersion?: string;
 }
 
 interface SessionRpcResponseMap {
@@ -48,9 +50,8 @@ interface SessionRpcResponseMap {
   type: SessionRpcResultBase;
   press: SessionRpcResultBase;
   selectTab: SessionRpcResultBase;
-  querySnapshot: unknown;
-  readKnowledge: unknown;
-  recordKnowledge: unknown;
+  querySnapshot: SessionRpcResultBase;
+  recordKnowledge: SessionRpcResultBase;
   shutdown: { ok: true };
 }
 
@@ -58,21 +59,24 @@ export async function ensureSessionDaemon(options: SessionClientOptions = {}): P
   const env = options.env ?? (process.env as Record<string, string | undefined>);
   const paths = resolveSessionPaths(options.sessionRoot);
   const runtimeVersion = await resolveRequestedRuntimeVersion(options);
+
   if (options.launchDaemon) {
     const cached = injectedSessionCache.get(paths.sessionRoot);
     if (
       cached
       && cached.runtimeVersion === runtimeVersion
       && isProcessAlive(cached.pid)
-      && fs.existsSync(cached.socketPath)
+      && (await tryHealthcheck(cached.baseUrl)) !== null
     ) {
       return cached;
     }
+
     if (cached) {
-      await requestShutdown(cached.socketPath);
+      await requestShutdown(cached.baseUrl);
       injectedSessionCache.delete(paths.sessionRoot);
     }
   }
+
   const existing = await readSessionMetadata(paths.metadataPath);
 
   if (existing) {
@@ -80,13 +84,13 @@ export async function ensureSessionDaemon(options: SessionClientOptions = {}): P
       options.launchDaemon
       && existing.runtimeVersion === runtimeVersion
       && isProcessAlive(existing.pid)
-      && fs.existsSync(existing.socketPath)
+      && (await tryHealthcheck(existing.baseUrl)) !== null
     ) {
       injectedSessionCache.set(paths.sessionRoot, existing);
       return existing;
     }
 
-    const healthy = await tryHealthcheck(existing.socketPath);
+    const healthy = await tryHealthcheck(existing.baseUrl);
     if (healthy && healthy.runtimeVersion === runtimeVersion) {
       if (options.launchDaemon) {
         injectedSessionCache.set(paths.sessionRoot, healthy);
@@ -95,7 +99,7 @@ export async function ensureSessionDaemon(options: SessionClientOptions = {}): P
     }
 
     if (healthy) {
-      await requestShutdown(existing.socketPath);
+      await requestShutdown(existing.baseUrl);
     }
 
     await cleanupStaleSession(paths);
@@ -121,7 +125,7 @@ export async function ensureSessionDaemon(options: SessionClientOptions = {}): P
   while (Date.now() < deadline) {
     const metadata = await readSessionMetadata(paths.metadataPath);
     if (metadata) {
-      const healthy = await tryHealthcheck(metadata.socketPath);
+      const healthy = await tryHealthcheck(metadata.baseUrl);
       if (healthy) {
         if (options.launchDaemon) {
           injectedSessionCache.set(paths.sessionRoot, healthy);
@@ -156,7 +160,7 @@ export async function sendSessionRpcRequest<M extends SessionRpcMethod>(
   assertSessionRpcRequest(envelope);
 
   const metadata = await ensureSessionDaemon(options);
-  const result = await sendSocketRequest(metadata.socketPath, envelope);
+  const result = await sendHttpSessionRequest(metadata.baseUrl, envelope);
   return validateSessionResult(envelope.method, result) as SessionRpcResponseMap[M];
 }
 
@@ -181,6 +185,29 @@ function isEnvelope<M extends SessionRpcMethod>(
   return typeof value === "object" && value !== null && "method" in value;
 }
 
+async function sendHttpSessionRequest<M extends SessionRpcMethod>(
+  baseUrl: string,
+  request: SessionRpcRequestEnvelope<M>,
+): Promise<unknown> {
+  const endpoint = request.method === "selectTab"
+    ? "/select-tab"
+    : request.method === "querySnapshot"
+      ? "/query-snapshot"
+      : request.method === "recordKnowledge"
+        ? "/record-knowledge"
+        : request.method === "health"
+          ? "/health"
+          : request.method === "shutdown"
+            ? "/shutdown"
+            : `/${request.method}`;
+  const body = request.method === "health" || request.method === "shutdown" ? undefined : request.params;
+  return requestJson(
+    request.method === "health" ? "GET" : "POST",
+    new URL(endpoint, baseUrl).href,
+    body,
+  );
+}
+
 function validateSessionResult(method: SessionRpcMethod, result: unknown): unknown {
   switch (method) {
     case "health":
@@ -194,18 +221,16 @@ function validateSessionResult(method: SessionRpcMethod, result: unknown): unkno
     case "type":
     case "press":
     case "selectTab":
+    case "querySnapshot":
+    case "recordKnowledge":
       assertSessionRpcResult(result);
       return result;
     case "shutdown":
       return result;
-    case "querySnapshot":
-    case "readKnowledge":
-    case "recordKnowledge":
-      return result;
   }
 }
 
-async function defaultLaunchDaemon(options: BrowserSessionDaemonOptions): Promise<void> {
+async function defaultLaunchDaemon(options: SessionDaemonLaunchOptions): Promise<void> {
   const daemonEntry = resolveDaemonEntry();
   const args = [
     ...daemonEntry.args,
@@ -218,7 +243,7 @@ async function defaultLaunchDaemon(options: BrowserSessionDaemonOptions): Promis
   const child = spawn(daemonEntry.command, args, {
     detached: true,
     stdio: "ignore",
-    env: sanitizeEnv(options.env ?? process.env as Record<string, string | undefined>),
+    env: sanitizeEnv(options.env ?? (process.env as Record<string, string | undefined>)),
   });
   child.unref();
 }
@@ -227,32 +252,25 @@ function resolveDaemonEntry(): { command: string; args: string[]; entryPath: str
   const thisFile = fileURLToPath(import.meta.url);
   const runtimeDir = path.dirname(thisFile);
   const packageRoot = path.resolve(runtimeDir, "..");
-  const jsEntry = path.join(runtimeDir, "browser-sessiond.js");
-  if (fs.existsSync(jsEntry)) {
-    return {
-      command: process.execPath,
-      args: [],
-      entryPath: jsEntry,
-    };
-  }
+  const entryPath = path.join(packageRoot, "server", "browser-sessiond.mjs");
 
-  const tsEntry = path.join(runtimeDir, "browser-sessiond.ts");
-  const tsxCli = path.join(packageRoot, "node_modules", "tsx", "dist", "cli.mjs");
   return {
     command: process.execPath,
-    args: [tsxCli],
-    entryPath: tsEntry,
+    args: [],
+    entryPath,
   };
 }
 
 function resolveSessionPaths(sessionRootOverride?: string): SessionPaths {
-  const tempRoot = defaultRuntimeRoots().tempRoot;
-  const sessionRoot = sessionRootOverride ?? path.join(tempRoot, "session");
+  const sessionRoot = sessionRootOverride ?? resolveDefaultSessionRoot();
   return {
     sessionRoot,
     metadataPath: path.join(sessionRoot, "session.json"),
-    socketPath: resolveSessionSocketPath(sessionRoot, tempRoot),
   };
+}
+
+function resolveDefaultSessionRoot(): string {
+  return path.join(os.homedir(), ".sasiki", "browser-skill", "http-session");
 }
 
 async function readSessionMetadata(metadataPath: string): Promise<SessionMetadata | null> {
@@ -268,14 +286,9 @@ async function readSessionMetadata(metadataPath: string): Promise<SessionMetadat
   }
 }
 
-async function tryHealthcheck(socketPath: string): Promise<SessionMetadata | null> {
+async function tryHealthcheck(baseUrl: string): Promise<SessionMetadata | null> {
   try {
-    await access(socketPath);
-    const result = await sendSocketRequest(socketPath, {
-      requestId: randomUUID(),
-      method: "health",
-      params: {},
-    });
+    const result = await requestJson("GET", new URL("/health", baseUrl).href);
     assertSessionMetadata(result);
     return result;
   } catch {
@@ -285,18 +298,13 @@ async function tryHealthcheck(socketPath: string): Promise<SessionMetadata | nul
 
 async function cleanupStaleSession(paths: SessionPaths): Promise<void> {
   await rm(paths.metadataPath, { force: true }).catch(() => {});
-  await rm(paths.socketPath, { force: true }).catch(() => {});
 }
 
-async function requestShutdown(socketPath: string): Promise<void> {
+async function requestShutdown(baseUrl: string): Promise<void> {
   try {
-    await sendSocketRequest(socketPath, {
-      requestId: randomUUID(),
-      method: "shutdown",
-      params: {},
-    });
+    await requestJson("POST", new URL("/shutdown", baseUrl).href, {});
   } catch {
-    // Best effort only. We still clean stale metadata/socket afterwards.
+    // Best effort only. We still clean stale metadata afterwards.
   }
 }
 

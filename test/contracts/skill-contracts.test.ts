@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   assertActionResult,
   assertCaptureResult,
-} from "../../lib/types.js";
-import { defaultRuntimeRoots } from "../../lib/paths.js";
+} from "../../lib/types.mjs";
+import { defaultRuntimeRoots } from "../../lib/paths.mjs";
 
 const captureBase = {
   ok: true as const,
@@ -73,6 +74,30 @@ test("default runtime roots keep temp state outside the portable skill folder", 
   }
 });
 
+test("legacy browser-skill lib TypeScript front doors are deleted", () => {
+  const legacyLibFiles = [
+    "../../lib/browser-action.ts",
+    "../../lib/knowledge-query.ts",
+    "../../lib/knowledge-store.ts",
+    "../../lib/mcp-browser-client.ts",
+    "../../lib/page-identity.ts",
+    "../../lib/paths.ts",
+    "../../lib/snapshot-parser.ts",
+    "../../lib/snapshot-store.ts",
+    "../../lib/tab-binding-store.ts",
+    "../../lib/types.ts",
+  ];
+
+  for (const relativePath of legacyLibFiles) {
+    const legacyPath = fileURLToPath(new URL(relativePath, import.meta.url));
+    assert.equal(
+      existsSync(legacyPath),
+      false,
+      `${relativePath} should be removed once the .mjs library truth is in place`,
+    );
+  }
+});
+
 test("mutation result requires explicit base fields and rejects invalid actions", () => {
   assert.throws(
     () => assertActionResult({ ok: true, action: "click" }),
@@ -104,12 +129,14 @@ test("mutation result requires explicit base fields and rejects invalid actions"
   );
 });
 
-test("SKILL front door teaches automatic knowledge hits and keeps read-knowledge out of the normal flow", async () => {
-  const skillPath = path.resolve(process.cwd(), "SKILL.md");
+test("SKILL front door teaches curl-based http usage, automatic knowledge hits, and no read-knowledge path", async () => {
+  const skillPath = fileURLToPath(new URL("../../SKILL.md", import.meta.url));
   const content = await readFile(skillPath, "utf8");
 
+  assert.match(content, /curl -s .*\/health/i);
+  assert.match(content, /curl -s -X POST .*\/capture/i);
   assert.match(content, /knowledgeHits auto-load/i);
-  assert.match(content, /Do not call `read-knowledge\.js` in the normal browser-task flow\./i);
-  assert.match(content, /must successfully call `record-knowledge\.js` before the final answer/i);
-  assert.doesNotMatch(content, /read-knowledge\.js is for reuse/i);
+  assert.match(content, /must successfully call `record-knowledge` before the final answer/i);
+  assert.doesNotMatch(content, /read-knowledge/i);
+  assert.doesNotMatch(content, /dist\/scripts/i);
 });

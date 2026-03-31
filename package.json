@@ -7,10 +7,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "postinstall": "npm run build",
-    "test": "tsx --test test/**/*.test.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "build": "tsc -p tsconfig.json"
+    "test:http": "node --test test/http/*.test.mjs",
+    "test:contracts": "tsx --test test/contracts/skill-contracts.test.ts",
+    "test": "npm run test:http && npm run test:contracts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

@@ -15,15 +15,13 @@ import {
   assertSessionMetadata,
   SESSION_METADATA_KEYS,
 } from "../../runtime/session-metadata.js";
-import { BrowserSessionDaemon, type BrowserSessionDaemonOptions } from "../../runtime/browser-sessiond.js";
-import { sendSessionSocketRequest } from "../../runtime/socket-client.js";
 import { ensureSessionDaemon, sendSessionRpcRequest, type SessionClientOptions } from "../../runtime/session-client.js";
+import { startBrowserSessionDaemon } from "../../server/http-client.mjs";
 
 const sessionResult = {
   ok: true as const,
   tabRef: "tab_demo",
   snapshotRef: "snapshot_demo",
-  snapshotPath: "/tmp/snapshot.md",
   page: {
     origin: "https://example.com",
     normalizedPath: "/dashboard",
@@ -47,9 +45,10 @@ const captureResult = {
 
 const sessionMetadata = {
   pid: 12345,
-  socketPath: "/tmp/browser-sessiond.sock",
+  port: 9222,
+  baseUrl: "http://127.0.0.1:9222",
   browserUrl: "http://127.0.0.1:9222",
-  connectionMode: "autoConnect" as const,
+  connectionMode: "http" as const,
   startedAt: "2026-03-30T12:00:00.000Z",
   lastSeenAt: "2026-03-30T12:01:00.000Z",
   runtimeVersion: "0.1.0",
@@ -129,7 +128,7 @@ const recordKnowledgeBySnapshotRefRequest = {
   },
 };
 
-test("session rpc contract freezes the daemon method names and metadata keys", () => {
+test("session rpc contract freezes the HTTP daemon method names and metadata keys", () => {
   assert.deepEqual(SESSION_RPC_METHODS, [
     "health",
     "capture",
@@ -139,7 +138,6 @@ test("session rpc contract freezes the daemon method names and metadata keys", (
     "press",
     "selectTab",
     "querySnapshot",
-    "readKnowledge",
     "recordKnowledge",
     "shutdown",
   ]);
@@ -149,18 +147,18 @@ test("session rpc contract freezes the daemon method names and metadata keys", (
     capture: ["tabRef", "pageId"],
     navigate: ["tabRef", "url"],
     click: ["tabRef", "uid"],
-    type: ["tabRef", "uid", "text"],
+    type: ["tabRef", "uid", "text", "submit", "slowly"],
     press: ["tabRef", "key"],
     selectTab: ["tabRef", "pageId"],
     querySnapshot: ["tabRef", "snapshotRef", "mode", "query", "role", "uid"],
-    readKnowledge: ["tabRef", "snapshotRef", "knowledgeRef", "page"],
     recordKnowledge: ["tabRef", "snapshotRef", "page", "guide", "keywords", "rationale", "knowledgeRef"],
     shutdown: [],
   });
 
   assert.deepEqual(SESSION_METADATA_KEYS, [
     "pid",
-    "socketPath",
+    "port",
+    "baseUrl",
     "browserUrl",
     "connectionMode",
     "startedAt",
@@ -169,7 +167,7 @@ test("session rpc contract freezes the daemon method names and metadata keys", (
   ]);
 });
 
-test("session rpc requests and results keep the runtime ref contract explicit", () => {
+test("session rpc requests and results keep the HTTP contract explicit", () => {
   assert.doesNotThrow(() => assertSessionRpcRequest(navigateRequest));
   assert.throws(
     () =>
@@ -209,13 +207,11 @@ test("session rpc requests and results keep the runtime ref contract explicit", 
   assert.throws(
     () =>
       assertSessionRpcRequest({
-        ...querySnapshotRequest,
-        params: {
-          ...querySnapshotRequest.params,
-          includeSnapshot: true,
-        },
+        requestId: "req_legacy",
+        method: "readKnowledge" as never,
+        params: {},
       }),
-    /includeSnapshot|unknown/i,
+    /supported session rpc method/,
   );
 
   assert.doesNotThrow(() => assertSessionRpcRequest(querySnapshotRequest));
@@ -244,17 +240,6 @@ test("session rpc requests and results keep the runtime ref contract explicit", 
       }),
     /recordKnowledge.*page|recordKnowledge.*tabRef|recordKnowledge.*snapshotRef/i,
   );
-  assert.throws(
-    () =>
-      assertSessionRpcRequest({
-        ...recordKnowledgeBySnapshotRefRequest,
-        params: {
-          ...recordKnowledgeBySnapshotRefRequest.params,
-          snapshotPath: "/tmp/legacy.md",
-        },
-      }),
-    /snapshotPath|unknown/i,
-  );
 
   assert.doesNotThrow(() => assertSessionRpcResult(sessionResult));
   assert.doesNotThrow(() => assertSessionCaptureResult(captureResult));
@@ -270,9 +255,21 @@ test("session rpc requests and results keep the runtime ref contract explicit", 
     () =>
       assertSessionRpcResult({
         ...sessionResult,
-        snapshotPath: "",
-      }),
+        snapshotPath: "/tmp/legacy.md",
+      } as never),
     /snapshotPath/,
+  );
+  assert.throws(
+    () =>
+      assertSessionRpcResult({
+        ...sessionResult,
+        page: {
+          origin: "",
+          normalizedPath: "/dashboard",
+          title: "Dashboard",
+        },
+      }),
+    /page\.origin/,
   );
   assert.throws(
     () =>
@@ -287,9 +284,17 @@ test("session rpc requests and results keep the runtime ref contract explicit", 
     () =>
       assertSessionMetadata({
         ...sessionMetadata,
-        socketPath: "",
-      }),
+        socketPath: "/tmp/legacy.sock",
+      } as never),
     /socketPath/,
+  );
+  assert.throws(
+    () =>
+      assertSessionMetadata({
+        ...sessionMetadata,
+        baseUrl: "",
+      }),
+    /baseUrl/,
   );
   assert.throws(
     () =>
@@ -310,21 +315,18 @@ test("session rpc requests and results keep the runtime ref contract explicit", 
   );
 });
 
-test("session client starts the daemon once and follow-up requests reuse the same session metadata", async () => {
+test("session client starts the daemon once and follow-up requests reuse the same HTTP session metadata", async () => {
   const harness = await createSessionClientHarness();
 
   try {
     const first = await ensureSessionDaemon(harness.options);
-    const second = await sendSessionSocketRequest(first.socketPath, {
-      requestId: "req_followup_health",
-      method: "health",
-      params: {},
-    });
+    const second = await sendSessionRpcRequest("health", {}, harness.options);
     assertSessionMetadata(second);
 
     assert.equal(harness.launchCount(), 1);
     assert.equal(first.pid, second.pid);
-    assert.equal(first.socketPath, second.socketPath);
+    assert.equal(first.port, second.port);
+    assert.equal(first.baseUrl, second.baseUrl);
   } finally {
     await harness.cleanup();
   }
@@ -338,9 +340,10 @@ test("session client ensureSessionDaemon discards stale metadata and recreates t
       path.join(harness.sessionRoot, "session.json"),
       `${JSON.stringify({
         pid: 999999,
-        socketPath: path.join(harness.sessionRoot, "browser-sessiond.sock"),
+        port: 9222,
+        baseUrl: "http://127.0.0.1:9222",
         browserUrl: null,
-        connectionMode: "autoConnect",
+        connectionMode: "http",
         startedAt: "2026-03-30T00:00:00.000Z",
         lastSeenAt: "2026-03-30T00:00:00.000Z",
         runtimeVersion: "0.0.0-stale",
@@ -353,6 +356,8 @@ test("session client ensureSessionDaemon discards stale metadata and recreates t
     assert.equal(harness.launchCount(), 1);
     assert.equal(metadata.runtimeVersion, "0.1.0-test");
     assert.equal(metadata.pid > 0, true);
+    assert.equal(metadata.port > 0, true);
+    assert.equal(metadata.baseUrl.startsWith("http://"), true);
   } finally {
     await harness.cleanup();
   }
@@ -376,15 +381,16 @@ test("session client restarts a healthy daemon when the requested runtimeVersion
   }
 });
 
-test("session client exports a narrow method-plus-params request API for other lanes", async () => {
+test("session client exposes a narrow HTTP request API for other lanes", async () => {
   const harness = await createSessionClientHarness();
 
   try {
     const health = await sendSessionRpcRequest("health", {}, harness.options);
 
     assert.equal(health.runtimeVersion, "0.1.0-test");
-    assert.equal(typeof health.socketPath, "string");
-    assert.equal(health.socketPath.endsWith("browser-sessiond.sock"), true);
+    assert.equal(typeof health.port, "number");
+    assert.equal(typeof health.baseUrl, "string");
+    assert.equal("snapshotPath" in health, false);
   } finally {
     await harness.cleanup();
   }
@@ -400,7 +406,7 @@ async function createSessionClientHarness(): Promise<{
   const sessionRoot = path.join(root, "session");
   await mkdir(sessionRoot, { recursive: true });
   let launches = 0;
-  let daemon: BrowserSessionDaemon | null = null;
+  let daemon: Awaited<ReturnType<typeof startBrowserSessionDaemon>> | null = null;
 
   const options: SessionClientOptions = {
     env: {},
@@ -409,17 +415,10 @@ async function createSessionClientHarness(): Promise<{
     startupTimeoutMs: 2_000,
     launchDaemon: async (daemonOptions) => {
       launches += 1;
-      daemon = new BrowserSessionDaemon({
-        ...daemonOptions,
-        createMcpBridge: async () => ({
-          close: async () => {},
-          listPages: async () => "## Pages\n1: https://example.com [selected]",
-          newPage: async () => "## Pages\n1: chrome://newtab/ [selected]",
-          captureSnapshot: async () => "## Snapshot\nuid=1_0 RootWebArea \"Example\"",
-          callTool: async () => ({ content: [{ type: "text", text: "ok" }] }),
-        }),
-      } satisfies BrowserSessionDaemonOptions);
-      await daemon.start();
+      daemon = await startBrowserSessionDaemon({
+        sessionRoot: daemonOptions.sessionRoot,
+        runtimeVersion: daemonOptions.runtimeVersion,
+      });
     },
   };
 
@@ -429,7 +428,7 @@ async function createSessionClientHarness(): Promise<{
     launchCount: () => launches,
     cleanup: async () => {
       if (daemon) {
-        await daemon.stop().catch(() => {});
+        await daemon.daemon.stop().catch(() => {});
       }
       await rm(root, { recursive: true, force: true });
     },
