@@ -7,6 +7,7 @@ import {
   sendSessionRpcRequest,
 } from "../lib/cli.js";
 import { KnowledgeStore } from "../lib/knowledge-store.js";
+import { readCliStringArgWithAliases } from "../lib/browser-action.js";
 import { normalizePagePath } from "../lib/page-identity.js";
 
 function cliString(args: Record<string, string | boolean>, key: string): string | undefined {
@@ -22,19 +23,19 @@ function parseKeywords(value: string | undefined): string[] {
 }
 
 function cliNormalizedPath(args: Record<string, string | boolean>): string | undefined {
-  return cliString(args, "normalized-path") ?? cliString(args, "path");
+  return readCliStringArgWithAliases(args, "normalized-path", "path");
 }
 
 function cliMaybeSnapshotRef(args: Record<string, string | boolean>): string | undefined {
-  return cliString(args, "snapshot-ref") ?? cliString(args, "snapshotRef");
+  return readCliStringArgWithAliases(args, "snapshot-ref", "snapshotRef");
 }
 
 function cliMaybeTabRef(args: Record<string, string | boolean>): string | undefined {
-  return cliString(args, "tab-ref") ?? cliString(args, "tabRef");
+  return readCliStringArgWithAliases(args, "tab-ref", "tabRef");
 }
 
 function cliMaybeKnowledgeRef(args: Record<string, string | boolean>): string | undefined {
-  return cliString(args, "knowledge-ref") ?? cliString(args, "knowledgeRef");
+  return readCliStringArgWithAliases(args, "knowledge-ref", "knowledgeRef");
 }
 
 function cliTitle(args: Record<string, string | boolean>): string {

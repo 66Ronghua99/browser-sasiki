@@ -223,7 +223,7 @@ export async function runBrowserAction(
 }
 
 export async function runCaptureFlow(
-  args: { tabIndex?: number; tabRef?: string },
+  args: { pageId?: number; tabRef?: string },
   deps: BrowserActionDeps,
 ): Promise<CaptureResult> {
   await deps.snapshots.cleanupExpired();
@@ -231,14 +231,14 @@ export async function runCaptureFlow(
   const providedTabRef = optionalNonEmptyString(args.tabRef, "tabRef");
   const captureTarget = await resolveCaptureTarget(args, deps, providedTabRef);
   const rawSnapshotText = await deps.browser.captureSnapshot();
-  const snapshotText = normalizeCapturedSnapshot(captureTarget.pageListText, rawSnapshotText, captureTarget.tabIndex);
+  const snapshotText = normalizeCapturedSnapshot(captureTarget.pageListText, rawSnapshotText, captureTarget.pageId);
   const { snapshotPath } = await deps.snapshots.write(snapshotText);
   const page = pageIdentityFromSnapshotText(snapshotText);
   const tabRef = providedTabRef ?? mintTabRef();
 
   await deps.tabBindings.write({
     tabRef,
-    browserTabIndex: captureTarget.tabIndex,
+    browserTabIndex: captureTarget.pageId,
     snapshotPath,
     page,
   });
@@ -256,7 +256,7 @@ export async function runCaptureFlow(
       ? `Captured a fresh snapshot and bound a new workspace tab to ${tabRef}.`
       : captureTarget.reusedBinding
         ? `Refreshed ${tabRef} with a fresh snapshot.`
-        : `Captured a fresh snapshot and bound browser tab ${captureTarget.tabIndex} to ${tabRef}.`,
+        : `Captured a fresh snapshot and bound browser tab ${captureTarget.pageId} to ${tabRef}.`,
   };
 }
 
@@ -310,6 +310,19 @@ export function readCliStringArg(
   return typeof value === "string" ? value : undefined;
 }
 
+export function readCliStringArgWithAliases(
+  args: Record<string, string | boolean>,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = readCliStringArg(args, key);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
 export function optionalCliStringArg(
   args: Record<string, string | boolean>,
   key: string,
@@ -325,6 +338,20 @@ export function optionalCliStringArg(
   return rawValue;
 }
 
+export function optionalCliStringArgWithAliases(
+  args: Record<string, string | boolean>,
+  label: string,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = optionalCliStringArg(args, key, label);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
 export function requireCliStringArg(
   args: Record<string, string | boolean>,
   key: string,
@@ -333,6 +360,18 @@ export function requireCliStringArg(
   const value = optionalCliStringArg(args, key, label);
   if (value === undefined) {
     throw new Error(`${label} is required (--${key})`);
+  }
+  return value;
+}
+
+export function requireCliStringArgWithAliases(
+  args: Record<string, string | boolean>,
+  label: string,
+  ...keys: string[]
+): string {
+  const value = optionalCliStringArgWithAliases(args, label, ...keys);
+  if (value === undefined) {
+    throw new Error(`${label} is required (--${keys[0]})`);
   }
   return value;
 }
@@ -452,22 +491,22 @@ async function createDefaultBrowserActionDeps(): Promise<DisposableBrowserAction
 }
 
 async function resolveCaptureTarget(
-  args: { tabIndex?: number; tabRef?: string },
+  args: { pageId?: number; tabRef?: string },
   deps: BrowserActionDeps,
   providedTabRef: string | undefined,
 ): Promise<{
-  tabIndex: number;
+  pageId: number;
   pageListText: string;
   createdWorkspaceTab: boolean;
   reusedBinding: boolean;
 }> {
-  if (typeof args.tabIndex === "number") {
-    if (!Number.isInteger(args.tabIndex) || args.tabIndex < 0) {
-      throw new Error("tabIndex must be a non-negative integer");
+  if (typeof args.pageId === "number") {
+    if (!Number.isInteger(args.pageId) || args.pageId < 0) {
+      throw new Error("pageId must be a non-negative integer");
     }
     return {
-      tabIndex: args.tabIndex,
-      pageListText: await selectCapturedPage(deps.browser, args.tabIndex),
+      pageId: args.pageId,
+      pageListText: await selectCapturedPage(deps.browser, args.pageId),
       createdWorkspaceTab: false,
       reusedBinding: false,
     };
@@ -479,7 +518,7 @@ async function resolveCaptureTarget(
       const existingBinding = await deps.tabBindings.read(providedTabRef);
       try {
         return {
-          tabIndex: existingBinding.browserTabIndex,
+          pageId: existingBinding.browserTabIndex,
           pageListText: await selectCapturedPage(deps.browser, existingBinding.browserTabIndex),
           createdWorkspaceTab: false,
           reusedBinding: true,
@@ -492,7 +531,7 @@ async function resolveCaptureTarget(
 
       const reboundWorkspaceTab = await deps.browser.openWorkspaceTab();
       return {
-        tabIndex: reboundWorkspaceTab.pageId,
+        pageId: reboundWorkspaceTab.pageId,
         pageListText: reboundWorkspaceTab.pageListText,
         createdWorkspaceTab: true,
         reusedBinding: false,
@@ -502,7 +541,7 @@ async function resolveCaptureTarget(
 
   const workspaceTab = await deps.browser.openWorkspaceTab();
   return {
-    tabIndex: workspaceTab.pageId,
+    pageId: workspaceTab.pageId,
     pageListText: workspaceTab.pageListText,
     createdWorkspaceTab: true,
     reusedBinding: false,

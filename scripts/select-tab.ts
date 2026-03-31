@@ -8,8 +8,8 @@ import {
   withSnapshotRefFirst,
 } from "../lib/cli.js";
 import {
+  optionalCliStringArgWithAliases,
   parseCliIntegerArg,
-  readCliStringArg,
   requireCliIntegerArg,
   requireCliStringArg,
 } from "../lib/browser-action.js";
@@ -35,10 +35,7 @@ export function parseSelectTabCliArgs(args: Record<string, string | boolean>): {
   tabRef: string;
   pageId: number;
 } {
-  const pageIdValue =
-    readCliStringArg(args, "page-id")
-    ?? readCliStringArg(args, "index")
-    ?? readCliStringArg(args, "tab-index");
+  const pageIdValue = optionalCliStringArgWithAliases(args, "pageId", "page-id", "index", "tab-index");
   if (pageIdValue === undefined) {
     throw new Error("pageId is required (--page-id)");
   }

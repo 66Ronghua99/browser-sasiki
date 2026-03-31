@@ -21,7 +21,7 @@ Default capture behavior is now workspace-oriented:
 
 - first `capture --tab-ref <tabRef>` creates a new workspace tab for that agent context
 - later `capture --tab-ref <same-tabRef>` refreshes that existing bound tab
-- binding an already open tab requires explicit intent through `--tab-index` on `capture` or `select-tab` later
+- binding an already open tab requires explicit intent through `--page-id` on `capture` or `select-tab` later
 
 If capture fails because Chrome is not attachable, open `chrome://inspect/#remote-debugging` in Chrome, turn remote debugging on, allow the MCP connection if prompted, and then retry capture.
 
@@ -65,7 +65,7 @@ Use the README as the denser operator-facing reference for installation and exac
 - `snapshotRef`: the daemon-generated handle for a stored snapshot. This is the only snapshot lookup handle normal agent flows should depend on.
 - `uid`: the Chrome DevTools accessibility-tree element handle from the latest snapshot. This is the canonical element selector.
 - `page-id`: the Chrome DevTools page handle used by `list_pages` / `select_page`.
-- `tab-index`: capture-only explicit override for binding an already open tab instead of creating a new workspace tab.
+- `page-id`: explicit override for binding an already open tab instead of creating a new workspace tab.
 
 ### `tabRef` Rules
 
@@ -87,7 +87,8 @@ Use the README as the denser operator-facing reference for installation and exac
 - `capture.js`
   - purpose: create or refresh an agent workspace
   - recommended: `--tab-ref <tabRef>`
-  - optional: `--tab-index <page-id>` to bind an already open tab explicitly
+  - optional: `--page-id <page-id>` to bind an already open tab explicitly
+  - alias: `--tab-index` remains accepted during migration
   - default behavior: first use for a new `tabRef` opens a new workspace tab
 - `navigate.js`
   - required: `--tab-ref`, `--url`

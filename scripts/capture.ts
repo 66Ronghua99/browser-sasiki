@@ -7,16 +7,16 @@ import {
   sendSessionRpcRequest,
   withSnapshotRefFirst,
 } from "../lib/cli.js";
-import { optionalCliStringArg, parseCliIntegerArg } from "../lib/browser-action.js";
+import { optionalCliStringArg, optionalCliStringArgWithAliases, parseCliIntegerArg } from "../lib/browser-action.js";
 import type { PublicCaptureResult } from "../lib/types.js";
 import { assertSessionCaptureResult } from "../runtime/session-rpc-types.js";
 
 export async function runCaptureCommand(
-  args: { tabIndex?: number; tabRef?: string },
+  args: { pageId?: number; tabRef?: string },
 ): Promise<PublicCaptureResult> {
-  const params: { tabIndex?: number; tabRef?: string } = {};
-  if (args.tabIndex !== undefined) {
-    params.tabIndex = args.tabIndex;
+  const params: { pageId?: number; tabRef?: string } = {};
+  if (args.pageId !== undefined) {
+    params.pageId = args.pageId;
   }
   if (args.tabRef !== undefined) {
     params.tabRef = args.tabRef;
@@ -28,15 +28,15 @@ export async function runCaptureCommand(
 }
 
 export function parseCaptureCliArgs(args: Record<string, string | boolean>): {
-  tabIndex?: number;
+  pageId?: number;
   tabRef?: string;
 } {
   const tabRef = optionalCliStringArg(args, "tab-ref", "tabRef");
-  const tabIndexValue = optionalCliStringArg(args, "tab-index", "tabIndex");
+  const pageIdValue = optionalCliStringArgWithAliases(args, "pageId", "page-id", "tab-index", "tabIndex");
 
   return {
-    ...(tabIndexValue !== undefined
-      ? { tabIndex: parseCliIntegerArg(tabIndexValue, "tabIndex") as number }
+    ...(pageIdValue !== undefined
+      ? { pageId: parseCliIntegerArg(pageIdValue, "pageId") as number }
       : {}),
     ...(tabRef !== undefined ? { tabRef } : {}),
   };

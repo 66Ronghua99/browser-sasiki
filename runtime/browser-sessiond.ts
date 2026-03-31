@@ -70,14 +70,6 @@ interface ResolvedSnapshotContext {
   page: SkillPageIdentity;
 }
 
-function hasSnapshotPath(value: object): value is { snapshotPath?: string } {
-  return "snapshotPath" in value;
-}
-
-function resolveExplicitSnapshotPath(snapshotPath: string | undefined): string | undefined {
-  return snapshotPath ? path.resolve(snapshotPath) : undefined;
-}
-
 export class BrowserSessionDaemon {
   private readonly env: Record<string, string | undefined>;
   private readonly paths: SessionPaths;
@@ -331,7 +323,6 @@ export class BrowserSessionDaemon {
 
     return {
       ...queryResult,
-      ...(params.includeSnapshot ? { snapshotText: resolved.snapshotText } : {}),
       ...(resolved.tabRef !== undefined ? { tabRef: resolved.tabRef } : {}),
       snapshotRef: resolved.snapshotRef,
       knowledgeHits,
@@ -363,13 +354,10 @@ export class BrowserSessionDaemon {
   private async recordKnowledge(params: SessionRpcRequestMap["recordKnowledge"]): Promise<unknown> {
     const timestamp = new Date().toISOString();
     const resolvedPageContext = params.page === undefined ? await this.resolveSnapshotContext(params) : undefined;
-    const snapshotPath = params.snapshotPath
-      ?? resolvedPageContext?.snapshotPath
-      ?? (params.snapshotRef ? this.snapshotPathFromRef(params.snapshotRef) : undefined)
-      ?? (params.tabRef ? (await this.tabBindings.read(params.tabRef)).snapshotPath : undefined);
+    const snapshotPath = resolvedPageContext?.snapshotPath;
     const page = params.page ?? resolvedPageContext?.page;
     if (!page) {
-      throw new Error("recordKnowledge requires page, tabRef, snapshotRef, or snapshotPath");
+      throw new Error("recordKnowledge requires page, tabRef, or snapshotRef");
     }
     const id = params.knowledgeRef ?? `knowledge_${randomUUID()}`;
     const record = {
@@ -401,8 +389,8 @@ export class BrowserSessionDaemon {
 
   private async resolveSnapshotContext(
     params: Pick<SessionRpcRequestMap["querySnapshot"], "tabRef" | "snapshotRef">
-      | Pick<SessionRpcRequestMap["readKnowledge"], "tabRef" | "snapshotRef" | "snapshotPath">
-      | Pick<SessionRpcRequestMap["recordKnowledge"], "tabRef" | "snapshotRef" | "snapshotPath">,
+      | Pick<SessionRpcRequestMap["readKnowledge"], "tabRef" | "snapshotRef">
+      | Pick<SessionRpcRequestMap["recordKnowledge"], "tabRef" | "snapshotRef">,
   ): Promise<ResolvedSnapshotContext> {
     if (params.tabRef) {
       const binding = await this.tabBindings.read(params.tabRef);
@@ -416,10 +404,9 @@ export class BrowserSessionDaemon {
       };
     }
 
-    const snapshotPath = resolveExplicitSnapshotPath(hasSnapshotPath(params) ? params.snapshotPath : undefined)
-      ?? (params.snapshotRef ? this.snapshotPathFromRef(params.snapshotRef) : undefined);
+    const snapshotPath = params.snapshotRef ? this.snapshotPathFromRef(params.snapshotRef) : undefined;
     if (!snapshotPath) {
-      throw new Error("snapshot lookup requires tabRef, snapshotRef, or snapshotPath");
+      throw new Error("snapshot lookup requires tabRef or snapshotRef");
     }
 
     const snapshotText = await this.snapshots.read(snapshotPath);

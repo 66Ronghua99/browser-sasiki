@@ -1,7 +1,7 @@
 import process from "node:process";
 
 import { formatCliError, isDirectCliInvocation, readCliArgs, sendSessionRpcRequest } from "../lib/cli.js";
-import { optionalCliStringArg, requireCliStringArg } from "../lib/browser-action.js";
+import { optionalCliStringArgWithAliases, requireCliStringArg } from "../lib/browser-action.js";
 import { querySnapshotText } from "../lib/knowledge-query.js";
 import { pageIdentityFromSnapshotText, normalizePagePath } from "../lib/page-identity.js";
 import type { SessionRpcRequestMap } from "../runtime/session-rpc-types.js";
@@ -53,24 +53,24 @@ function resolveHandleSelector(uid: string | undefined, ref: string | undefined)
 }
 
 export function parseQuerySnapshotCliArgs(args: Record<string, string | boolean>): QuerySnapshotCliArgs {
-  const tabRef = optionalCliStringArg(args, "tab-ref", "tabRef");
-  const snapshotRef = optionalCliStringArg(args, "snapshot-ref", "snapshotRef");
-  const snapshotText = optionalCliStringArg(args, "snapshot-text", "snapshotText");
-  const text = optionalCliStringArg(args, "text", "text");
-  const query = optionalCliStringArg(args, "query", "query");
-  const role = optionalCliStringArg(args, "role", "role");
-  const uid = optionalCliStringArg(args, "uid", "uid");
-  const ref = optionalCliStringArg(args, "ref", "ref");
-  const origin = optionalCliStringArg(args, "origin", "origin");
-  const normalizedPath = optionalCliStringArg(args, "path", "path");
-  const title = optionalCliStringArg(args, "title", "title");
+  const tabRef = optionalCliStringArgWithAliases(args, "tabRef", "tab-ref", "tabRef");
+  const snapshotRef = optionalCliStringArgWithAliases(args, "snapshotRef", "snapshot-ref", "snapshotRef");
+  const snapshotText = optionalCliStringArgWithAliases(args, "snapshotText", "snapshot-text", "snapshotText");
+  const text = optionalCliStringArgWithAliases(args, "text", "text");
+  const query = optionalCliStringArgWithAliases(args, "query", "query");
+  const role = optionalCliStringArgWithAliases(args, "role", "role");
+  const uid = optionalCliStringArgWithAliases(args, "uid", "uid");
+  const ref = optionalCliStringArgWithAliases(args, "ref", "ref");
+  const origin = optionalCliStringArgWithAliases(args, "origin", "origin");
+  const normalizedPath = optionalCliStringArgWithAliases(args, "path", "path");
+  const title = optionalCliStringArgWithAliases(args, "title", "title");
   const modeValue = requireCliStringArg(args, "mode", "mode");
 
-  if (optionalCliStringArg(args, "knowledge-file", "knowledgeFile") !== undefined) {
+  if (optionalCliStringArgWithAliases(args, "knowledgeFile", "knowledge-file", "knowledgeFile") !== undefined) {
     throw new Error("query-snapshot no longer accepts --knowledge-file; daemon-backed retrieval owns knowledge hits");
   }
 
-  if (optionalCliStringArg(args, "snapshot-path", "snapshotPath") !== undefined) {
+  if (optionalCliStringArgWithAliases(args, "snapshotPath", "snapshot-path", "snapshotPath") !== undefined) {
     throw new Error("query-snapshot no longer accepts --snapshot-path; use --tab-ref, --snapshot-ref, or --snapshot-text");
   }
 

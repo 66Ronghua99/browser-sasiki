@@ -79,7 +79,7 @@ The default workspace behavior is now:
 
 - first `capture --tab-ref <tabRef>` creates a new workspace tab for that agent context
 - later `capture --tab-ref <same-tabRef>` refreshes the already bound workspace tab
-- binding an existing tab is explicit through `--tab-index` on `capture` or `select-tab` afterward
+- binding an existing tab is explicit through `--page-id` on `capture` or `select-tab` afterward
 
 Typical sequence:
 
@@ -131,24 +131,25 @@ The main command groups are:
   - use this for `click` and `type`
 - `page-id`
   - Chrome DevTools page handle from `list_pages`
-  - use this with `select-tab`
+  - use this with `select-tab` and as the canonical explicit override for `capture`
 - `tab-index`
-  - explicit `capture` override for binding an already open tab
-  - this is the opt-in escape hatch when you do want to capture an existing tab instead of creating a new workspace tab
+  - legacy alias for `capture --page-id`
+  - keep it only for migration compatibility
 
 - `capture.js`
   - purpose: create or refresh a browser workspace
   - optional but recommended: `--tab-ref <tabRef>`
-  - optional: `--tab-index <page-id>`
+  - optional: `--page-id <page-id>`
+  - alias: `--tab-index`
   - behavior:
     - with a new `--tab-ref`, opens a new workspace tab by default
     - with an existing `--tab-ref`, refreshes that binding
-    - with `--tab-index`, binds the specified already open tab instead of creating a new one
+    - with `--page-id`, binds the specified already open tab instead of creating a new one
   - example:
 
 ```bash
 node dist/scripts/capture.js --tab-ref main
-node dist/scripts/capture.js --tab-ref support --tab-index 3
+node dist/scripts/capture.js --tab-ref support --page-id 3
 ```
 
 - `navigate.js`
@@ -242,7 +243,7 @@ node dist/scripts/record-knowledge.js \
 
 - Use one `--tab-ref` consistently for one browser task context.
 - Capture first if you are unsure what the current browser context is.
-- First capture now creates a new workspace tab by default, so it should not hijack the user's current active tab unless you explicitly pass `--tab-index`.
+- First capture now creates a new workspace tab by default, so it should not hijack the user's current active tab unless you explicitly pass `--page-id`.
 - Normal CLI calls reuse one healthy `browser-sessiond`, and the next request should automatically replace an older daemon when the installed runtime changes.
 - `tabRef` bindings are durable workspace pointers, not magic live handles. If the bound Chrome tab is manually closed, re-run `capture` or `select-tab` to rebind that workspace.
 - Treat returned `tabRef` and `snapshotRef` as the main runtime contract. Normal agent flows should not depend on runtime file paths.

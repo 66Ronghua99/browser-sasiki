@@ -39,14 +39,14 @@ test("capture forwards tab selection to the session sender and hides snapshotPat
     return createCaptureResult();
   });
 
-  const result = await runCaptureCommand({ tabRef: "main", tabIndex: 2 });
+  const result = await runCaptureCommand({ tabRef: "main", pageId: 2 });
 
   assert.equal(requests.length, 1);
   assert.equal(requests[0]?.method, "capture");
   assert.ok(typeof requests[0]?.requestId === "string" && String(requests[0]?.requestId).length > 0);
   assert.deepEqual(requests[0]?.params, {
     tabRef: "main",
-    tabIndex: 2,
+    pageId: 2,
   });
   assert.deepEqual(Object.keys(result).slice(0, 3), ["ok", "snapshotRef", "tabRef"]);
   assert.equal(result.snapshotRef, "snapshot_demo");
@@ -61,7 +61,7 @@ test("capture CLI parsing rejects valueless optional flags and still accepts abs
     parseCaptureCliArgs({ "tab-ref": "tab_demo", "tab-index": "1" }),
     {
       tabRef: "tab_demo",
-      tabIndex: 1,
+      pageId: 1,
     },
   );
 
@@ -72,6 +72,6 @@ test("capture CLI parsing rejects valueless optional flags and still accepts abs
 
   assert.throws(
     () => parseCaptureCliArgs({ "tab-index": true }),
-    /tabIndex.*--tab-index/i,
+    /pageId.*--tab-index/i,
   );
 });

@@ -12,12 +12,51 @@ import {
   sendSessionRpcRequest,
   setSessionRpcRequestSenderForTesting,
 } from "../../lib/cli.js";
+import {
+  optionalCliStringArgWithAliases,
+  readCliStringArgWithAliases,
+} from "../../lib/browser-action.js";
 
 test("readCliArgs parses key-value pairs and bare flags", () => {
   assert.deepEqual(readCliArgs(["--tab-ref", "main", "--submit"]), {
     "tab-ref": "main",
     submit: true,
   });
+});
+
+test("shared CLI alias readers normalize canonical and legacy keys in one place", () => {
+  assert.equal(
+    readCliStringArgWithAliases(
+      { "page-id": "7", "tab-index": "2", index: "1" },
+      "page-id",
+      "tab-index",
+      "index",
+    ),
+    "7",
+  );
+
+  assert.equal(
+    optionalCliStringArgWithAliases(
+      { index: "3" },
+      "pageId",
+      "page-id",
+      "tab-index",
+      "index",
+    ),
+    "3",
+  );
+
+  assert.throws(
+    () =>
+      optionalCliStringArgWithAliases(
+        { "tab-index": true },
+        "pageId",
+        "page-id",
+        "tab-index",
+        "index",
+      ),
+    /pageId.*--tab-index/i,
+  );
 });
 
 test("isDirectCliInvocation treats symlinked argv1 as the same entry file", async () => {
@@ -75,7 +114,7 @@ test("sendSessionRpcRequest forwards one frozen RPC request envelope to the inje
 
   const result = await sendSessionRpcRequest("capture", {
     tabRef: "tab_demo",
-    tabIndex: 2,
+    pageId: 2,
   });
 
   assert.equal(requests.length, 1);
@@ -83,7 +122,7 @@ test("sendSessionRpcRequest forwards one frozen RPC request envelope to the inje
   assert.ok(typeof requests[0]?.requestId === "string" && String(requests[0]?.requestId).length > 0);
   assert.deepEqual(requests[0]?.params, {
     tabRef: "tab_demo",
-    tabIndex: 2,
+    pageId: 2,
   });
   assert.equal((result as { snapshotRef?: string }).snapshotRef, "snapshot_demo");
 });

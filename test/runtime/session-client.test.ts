@@ -76,7 +76,7 @@ const captureByIndexRequest = {
   requestId: "req_2b",
   method: "capture" as const,
   params: {
-    tabIndex: 2,
+    pageId: 2,
   },
 };
 
@@ -146,15 +146,15 @@ test("session rpc contract freezes the daemon method names and metadata keys", (
 
   assert.deepEqual(SESSION_RPC_REQUEST_FIELDS, {
     health: [],
-    capture: ["tabRef", "tabIndex"],
+    capture: ["tabRef", "pageId"],
     navigate: ["tabRef", "url"],
     click: ["tabRef", "uid"],
     type: ["tabRef", "uid", "text"],
     press: ["tabRef", "key"],
     selectTab: ["tabRef", "pageId"],
-    querySnapshot: ["tabRef", "snapshotRef", "mode", "query", "role", "uid", "includeSnapshot"],
-    readKnowledge: ["tabRef", "snapshotRef", "snapshotPath", "knowledgeRef", "page"],
-    recordKnowledge: ["tabRef", "snapshotRef", "snapshotPath", "page", "guide", "keywords", "rationale", "knowledgeRef"],
+    querySnapshot: ["tabRef", "snapshotRef", "mode", "query", "role", "uid"],
+    readKnowledge: ["tabRef", "snapshotRef", "knowledgeRef", "page"],
+    recordKnowledge: ["tabRef", "snapshotRef", "page", "guide", "keywords", "rationale", "knowledgeRef"],
     shutdown: [],
   });
 
@@ -200,10 +200,22 @@ test("session rpc requests and results keep the runtime ref contract explicit", 
       assertSessionRpcRequest({
         ...captureByIndexRequest,
         params: {
-          tabIndex: 1.5,
+          pageId: 1.5,
         },
       }),
-    /tabIndex/,
+    /pageId/,
+  );
+
+  assert.throws(
+    () =>
+      assertSessionRpcRequest({
+        ...querySnapshotRequest,
+        params: {
+          ...querySnapshotRequest.params,
+          includeSnapshot: true,
+        },
+      }),
+    /includeSnapshot|unknown/i,
   );
 
   assert.doesNotThrow(() => assertSessionRpcRequest(querySnapshotRequest));
@@ -230,7 +242,18 @@ test("session rpc requests and results keep the runtime ref contract explicit", 
           keywords: ["dashboard"],
         },
       }),
-    /recordKnowledge.*page|recordKnowledge.*tabRef|recordKnowledge.*snapshotRef|recordKnowledge.*snapshotPath/i,
+    /recordKnowledge.*page|recordKnowledge.*tabRef|recordKnowledge.*snapshotRef/i,
+  );
+  assert.throws(
+    () =>
+      assertSessionRpcRequest({
+        ...recordKnowledgeBySnapshotRefRequest,
+        params: {
+          ...recordKnowledgeBySnapshotRefRequest.params,
+          snapshotPath: "/tmp/legacy.md",
+        },
+      }),
+    /snapshotPath|unknown/i,
   );
 
   assert.doesNotThrow(() => assertSessionRpcResult(sessionResult));
