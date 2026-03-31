@@ -30,7 +30,6 @@ Create or refresh a workspace tab:
 
 ```bash
 curl -s -X POST http://127.0.0.1:3456/capture \
-  -H 'content-type: application/json' \
   -d '{"tabRef":"main"}'
 ```
 
@@ -38,7 +37,6 @@ Inspect the current page:
 
 ```bash
 curl -s -X POST http://127.0.0.1:3456/query-snapshot \
-  -H 'content-type: application/json' \
   -d '{"tabRef":"main","mode":"auto"}'
 ```
 
@@ -46,7 +44,6 @@ Navigate:
 
 ```bash
 curl -s -X POST http://127.0.0.1:3456/navigate \
-  -H 'content-type: application/json' \
   -d '{"tabRef":"main","url":"https://example.com"}'
 ```
 

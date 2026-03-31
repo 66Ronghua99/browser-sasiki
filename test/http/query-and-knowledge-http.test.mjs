@@ -74,6 +74,42 @@ test("HTTP request bodies reject legacy read-knowledge fields and keep the activ
   );
 });
 
+test("HTTP request bodies accept ref as a narrow alias for uid-based selectors", () => {
+  assert.doesNotThrow(() =>
+    assertHttpRequestBody("click", {
+      tabRef: "tab_demo",
+      ref: "submit_button",
+    }),
+  );
+
+  assert.doesNotThrow(() =>
+    assertHttpRequestBody("type", {
+      tabRef: "tab_demo",
+      ref: "query_input",
+      text: "zara zhang",
+    }),
+  );
+
+  assert.doesNotThrow(() =>
+    assertHttpRequestBody("querySnapshot", {
+      tabRef: "tab_demo",
+      mode: "search",
+      ref: "submit_button",
+    }),
+  );
+});
+
+test("HTTP request bodies keep rejecting playwright-only element payloads with allowed field guidance", () => {
+  assert.throws(
+    () =>
+      assertHttpRequestBody("click", {
+        tabRef: "tab_demo",
+        element: "Search result link",
+      }),
+    /allowed fields: tabRef, uid, ref/i,
+  );
+});
+
 test("public HTTP result shaping strips snapshotPath from nested daemon output", () => {
   const shaped = shapeHttpPublicResult({
     ok: true,

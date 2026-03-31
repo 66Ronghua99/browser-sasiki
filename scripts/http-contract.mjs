@@ -2,11 +2,11 @@ const ACTIVE_ENDPOINT_DEFINITIONS = [
   { name: "health", method: "GET", path: "/health", fields: [] },
   { name: "capture", method: "POST", path: "/capture", fields: ["tabRef", "pageId"] },
   { name: "navigate", method: "POST", path: "/navigate", fields: ["tabRef", "url"] },
-  { name: "click", method: "POST", path: "/click", fields: ["tabRef", "uid"] },
-  { name: "type", method: "POST", path: "/type", fields: ["tabRef", "uid", "text", "submit", "slowly"] },
+  { name: "click", method: "POST", path: "/click", fields: ["tabRef", "uid", "ref"] },
+  { name: "type", method: "POST", path: "/type", fields: ["tabRef", "uid", "ref", "text", "submit", "slowly"] },
   { name: "press", method: "POST", path: "/press", fields: ["tabRef", "key"] },
   { name: "selectTab", method: "POST", path: "/select-tab", fields: ["tabRef", "pageId"] },
-  { name: "querySnapshot", method: "POST", path: "/query-snapshot", fields: ["tabRef", "snapshotRef", "mode", "query", "role", "uid"] },
+  { name: "querySnapshot", method: "POST", path: "/query-snapshot", fields: ["tabRef", "snapshotRef", "mode", "query", "role", "uid", "ref"] },
   { name: "recordKnowledge", method: "POST", path: "/record-knowledge", fields: ["tabRef", "snapshotRef", "page", "guide", "keywords", "rationale"] },
   { name: "shutdown", method: "POST", path: "/shutdown", fields: [] },
 ];
@@ -80,7 +80,7 @@ export function assertHttpRequestBody(endpoint, body) {
       if (endpoint === "navigate") {
         assertNonEmptyString(body.url, "body.url");
       } else if (endpoint === "click") {
-        assertNonEmptyString(body.uid, "body.uid");
+        assertSelector(body, "body");
       } else if (endpoint === "press") {
         assertNonEmptyString(body.key, "body.key");
       } else {
@@ -89,7 +89,7 @@ export function assertHttpRequestBody(endpoint, body) {
       return;
     case "type":
       assertNonEmptyString(body.tabRef, "body.tabRef");
-      assertNonEmptyString(body.uid, "body.uid");
+      assertSelector(body, "body");
       assertNonEmptyString(body.text, "body.text");
       if (body.submit !== undefined) {
         assertBoolean(body.submit, "body.submit");
@@ -119,6 +119,9 @@ export function assertHttpRequestBody(endpoint, body) {
       }
       if (body.uid !== undefined) {
         assertNonEmptyString(body.uid, "body.uid");
+      }
+      if (body.ref !== undefined) {
+        assertNonEmptyString(body.ref, "body.ref");
       }
       return;
     case "recordKnowledge":
@@ -153,8 +156,22 @@ function assertAllowedFields(endpoint, body) {
   const allowed = new Set(HTTP_REQUEST_FIELDS[endpoint] ?? []);
   for (const key of Object.keys(body)) {
     if (!allowed.has(key)) {
-      throw new TypeError(`unknown field "${key}" for ${endpoint}`);
+      throw new TypeError(
+        `unknown field "${key}" for ${endpoint}; allowed fields: ${HTTP_REQUEST_FIELDS[endpoint].join(", ")}`,
+      );
     }
+  }
+}
+
+function assertSelector(body, label) {
+  if (body.uid === undefined && body.ref === undefined) {
+    throw new TypeError(`${label} must include uid or ref`);
+  }
+  if (body.uid !== undefined) {
+    assertNonEmptyString(body.uid, `${label}.uid`);
+  }
+  if (body.ref !== undefined) {
+    assertNonEmptyString(body.ref, `${label}.ref`);
   }
 }
 

@@ -39,7 +39,7 @@ That establishes the reusable browser runtime for the rest of the task.
 
 You must successfully call `record-knowledge` before the final answer when either of these is true:
 
-- you used `/query-snapshot` with full-page exploration to locate the right element or recover context
+- you have used `/query-snapshot` with full-page exploration to locate the right element or recover context
 - a query result or successful action revealed a stable reusable cue for the same page or page family
 
 If one of those triggers happened and no knowledge was recorded, the task is not complete.
@@ -63,19 +63,18 @@ If one of those triggers happened and no knowledge was recorded, the task is not
 curl -s http://127.0.0.1:3456/health
 
 curl -s -X POST http://127.0.0.1:3456/capture \
-  -H 'content-type: application/json' \
   -d '{"tabRef":"main"}'
 
 curl -s -X POST http://127.0.0.1:3456/query-snapshot \
-  -H 'content-type: application/json' \
   -d '{"tabRef":"main","mode":"auto"}'
 
 curl -s -X POST http://127.0.0.1:3456/navigate \
-  -H 'content-type: application/json' \
   -d '{"tabRef":"main","url":"https://example.com"}'
 
+curl -s -X POST http://127.0.0.1:3456/click \
+  -d '{"tabRef":"main","uid":"submit_button"}'
+
 curl -s -X POST http://127.0.0.1:3456/record-knowledge \
-  -H 'content-type: application/json' \
   -d '{"tabRef":"main","guide":"Promo code field is below the order summary.","keywords":["checkout","promo","summary"]}'
 ```
 
@@ -83,6 +82,7 @@ curl -s -X POST http://127.0.0.1:3456/record-knowledge \
 
 - Keep one stable `tabRef` for one browser task context.
 - Prefer `/query-snapshot` with auto mode for normal retrieval and use full-page exploration only when needed.
-- Prefer `uid` values from the latest snapshot when clicking or typing.
+- `/click` and `/type` accept `uid` from the latest snapshot, and also accept `ref` as a narrow alias for Playwright-style `[ref=...]` lines. Prefer `uid` when both are available.
+- Do not send Playwright-style `element` objects or call MCP-only tools such as `browser-run-code`; there is no `/browser-run-code` endpoint in this skill.
 - Record only stable cues that should help a later run on the same page or page family.
 - Treat `tabRef` and `snapshotRef` as the runtime contract. Do not route around the daemon by reading temp files directly during normal execution.

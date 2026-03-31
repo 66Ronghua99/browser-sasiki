@@ -134,9 +134,9 @@ export class BrowserSessionDaemon {
       case "navigate":
         return this.browserAction("navigate", "navigate_page", { type: "url", url: body.url }, body.tabRef);
       case "click":
-        return this.browserAction("click", "click", { uid: body.uid }, body.tabRef);
+        return this.browserAction("click", "click", { uid: body.uid ?? body.ref }, body.tabRef);
       case "type":
-        return this.browserAction("type", "fill", { uid: body.uid, value: body.text }, body.tabRef);
+        return this.browserAction("type", "fill", { uid: body.uid ?? body.ref, value: body.text }, body.tabRef);
       case "press":
         return this.browserAction("press", "press_key", { key: body.key }, body.tabRef);
       case "selectTab":
@@ -265,7 +265,7 @@ export class BrowserSessionDaemon {
       text: params.query,
       role: params.role,
       uid: params.uid,
-      ref: params.uid,
+      ref: params.ref,
       knowledgeHits,
       page: resolved.page,
     });

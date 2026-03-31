@@ -15,11 +15,11 @@ export const SESSION_RPC_REQUEST_FIELDS = Object.freeze({
   health: [],
   capture: ["tabRef", "pageId"],
   navigate: ["tabRef", "url"],
-  click: ["tabRef", "uid"],
-  type: ["tabRef", "uid", "text", "submit", "slowly"],
+  click: ["tabRef", "uid", "ref"],
+  type: ["tabRef", "uid", "ref", "text", "submit", "slowly"],
   press: ["tabRef", "key"],
   selectTab: ["tabRef", "pageId"],
-  querySnapshot: ["tabRef", "snapshotRef", "mode", "query", "role", "uid"],
+  querySnapshot: ["tabRef", "snapshotRef", "mode", "query", "role", "uid", "ref"],
   recordKnowledge: ["tabRef", "snapshotRef", "page", "guide", "keywords", "rationale", "knowledgeRef"],
   shutdown: [],
 });
@@ -76,7 +76,7 @@ function assertSessionRpcParams(method, params) {
       if (method === "navigate") {
         assertString(params.url, "params.url");
       } else if (method === "click") {
-        assertString(params.uid, "params.uid");
+        assertSelector(params, "params");
       } else if (method === "press") {
         assertString(params.key, "params.key");
       } else {
@@ -85,7 +85,7 @@ function assertSessionRpcParams(method, params) {
       return;
     case "type":
       assertString(params.tabRef, "params.tabRef");
-      assertString(params.uid, "params.uid");
+      assertSelector(params, "params");
       assertString(params.text, "params.text");
       if (params.submit !== undefined) {
         assertBoolean(params.submit, "params.submit");
@@ -115,6 +115,9 @@ function assertSessionRpcParams(method, params) {
       }
       if (params.uid !== undefined) {
         assertString(params.uid, "params.uid");
+      }
+      if (params.ref !== undefined) {
+        assertString(params.ref, "params.ref");
       }
       return;
     case "recordKnowledge":
@@ -152,8 +155,22 @@ function assertAllowedRequestFields(method, params) {
   const allowedFields = new Set(SESSION_RPC_REQUEST_FIELDS[method]);
   for (const key of Object.keys(params)) {
     if (!allowedFields.has(key)) {
-      throw new TypeError(`${method} params contain unknown field ${key}`);
+      throw new TypeError(
+        `${method} params contain unknown field ${key}; allowed fields: ${SESSION_RPC_REQUEST_FIELDS[method].join(", ")}`,
+      );
     }
+  }
+}
+
+function assertSelector(params, label) {
+  if (params.uid === undefined && params.ref === undefined) {
+    throw new TypeError(`${label} must include uid or ref`);
+  }
+  if (params.uid !== undefined) {
+    assertString(params.uid, `${label}.uid`);
+  }
+  if (params.ref !== undefined) {
+    assertString(params.ref, `${label}.ref`);
   }
 }
 

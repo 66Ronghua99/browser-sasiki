@@ -43,7 +43,7 @@ function createFakeBrowserBridge() {
       return [
         "## Latest page snapshot",
         `uid=root RootWebArea "${title}" url="${url}"`,
-        `- button [ref=submit_button] Submit ${state.nextSnapshotIndex}`,
+        `- button "Submit ${state.nextSnapshotIndex}" [ref=submit_button]`,
         `- textbox [uid=query_input] Search`,
       ].join("\n");
     },
@@ -201,6 +201,43 @@ test("browser-sessiond routes actions, query-snapshot, and record-knowledge thro
     assert.equal(repeatQuery.knowledgeHits.length > 0, true);
   } finally {
     await daemon.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("browser-sessiond accepts ref aliases for click and query-snapshot selectors", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const { daemon, metadata } = await startBrowserSessionDaemon({
+    sessionRoot: path.join(root, "session"),
+    port: 0,
+    runtimeVersion: "test-http",
+    runtimeRoots: createIsolatedRuntimeRoots(root),
+    createMcpBridge: async () => ({ ...createFakeBrowserBridge() }),
+  });
+
+  try {
+    const capture = await requestJson("POST", `${metadata.baseUrl}/capture`, {
+      tabRef: "main",
+    });
+    assert.equal(capture.ok, true);
+
+    const click = await requestJson("POST", `${metadata.baseUrl}/click`, {
+      tabRef: "main",
+      ref: "submit_button",
+    });
+    assert.equal(click.ok, true);
+
+    const query = await requestJson("POST", `${metadata.baseUrl}/query-snapshot`, {
+      tabRef: "main",
+      mode: "search",
+      ref: "submit_button",
+    });
+    assert.equal(query.ok, true);
+    assert.equal(query.mode, "search");
+    assert.equal(query.matches.length, 1);
+    assert.equal(query.matches[0].ref, "submit_button");
+  } finally {
+    await daemon.stop().catch(() => {});
     await rm(root, { recursive: true, force: true });
   }
 });
