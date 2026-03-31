@@ -18,7 +18,10 @@ export interface BrowserRuntime {
   captureSnapshot(): Promise<string>;
   callBrowserTool(name: string, args: Record<string, unknown>): Promise<ToolCallResultLike>;
   readActiveTabIndex(): Promise<number>;
-  openWorkspaceTab(): Promise<number>;
+  openWorkspaceTab(): Promise<{
+    pageId: number;
+    pageListText: string;
+  }>;
 }
 
 export interface BrowserActionDeps {
@@ -63,13 +66,22 @@ export class DefaultBrowserRuntime implements BrowserRuntime {
     return activeTab.index;
   }
 
-  async openWorkspaceTab(): Promise<number> {
+  async openWorkspaceTab(): Promise<{
+    pageId: number;
+    pageListText: string;
+  }> {
     const pageListText = await this.client.newPage(DEFAULT_WORKSPACE_TAB_URL);
     const activeTab = parseTabInventory(pageListText).find((tab) => tab.active);
     if (activeTab) {
-      return activeTab.index;
+      return {
+        pageId: activeTab.index,
+        pageListText,
+      };
     }
-    return this.readActiveTabIndex();
+    return {
+      pageId: await this.readActiveTabIndex(),
+      pageListText,
+    };
   }
 }
 
@@ -465,19 +477,33 @@ async function resolveCaptureTarget(
     const bindingExists = await deps.tabBindings.exists(providedTabRef);
     if (bindingExists) {
       const existingBinding = await deps.tabBindings.read(providedTabRef);
+      try {
+        return {
+          tabIndex: existingBinding.browserTabIndex,
+          pageListText: await selectCapturedPage(deps.browser, existingBinding.browserTabIndex),
+          createdWorkspaceTab: false,
+          reusedBinding: true,
+        };
+      } catch (error) {
+        if (!isMissingCapturedPageError(error)) {
+          throw error;
+        }
+      }
+
+      const reboundWorkspaceTab = await deps.browser.openWorkspaceTab();
       return {
-        tabIndex: existingBinding.browserTabIndex,
-        pageListText: await selectCapturedPage(deps.browser, existingBinding.browserTabIndex),
-        createdWorkspaceTab: false,
-        reusedBinding: true,
+        tabIndex: reboundWorkspaceTab.pageId,
+        pageListText: reboundWorkspaceTab.pageListText,
+        createdWorkspaceTab: true,
+        reusedBinding: false,
       };
     }
   }
 
-  const workspaceTabIndex = await deps.browser.openWorkspaceTab();
+  const workspaceTab = await deps.browser.openWorkspaceTab();
   return {
-    tabIndex: workspaceTabIndex,
-    pageListText: await selectCapturedPage(deps.browser, workspaceTabIndex),
+    tabIndex: workspaceTab.pageId,
+    pageListText: workspaceTab.pageListText,
     createdWorkspaceTab: true,
     reusedBinding: false,
   };
@@ -543,6 +569,13 @@ function assertBrowserToolSucceeded(name: string, result: ToolCallResultLike): v
   if (text && /^###\s*Error\b/im.test(text)) {
     throw new Error(`${name} returned an error payload: ${text}`);
   }
+}
+
+function isMissingCapturedPageError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /select_page/i.test(error.message) && /no page found/i.test(error.message);
 }
 
 async function selectCapturedPage(browser: BrowserRuntime, pageId: number): Promise<string> {

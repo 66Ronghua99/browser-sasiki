@@ -79,7 +79,7 @@ export interface SessionRpcRequestMap {
     tabRef?: string;
     snapshotRef?: string;
     snapshotPath?: string;
-    page: SkillPageIdentity;
+    page?: SkillPageIdentity;
     guide: string;
     keywords: string[];
     rationale?: string;
@@ -313,7 +313,17 @@ function assertSessionRpcParams(method: SessionRpcMethod, params: unknown): asse
       if (params.snapshotPath !== undefined) {
         assertString(params.snapshotPath, "params.snapshotPath");
       }
-      assertSessionPageIdentity(params.page, "params.page");
+      if (params.page !== undefined) {
+        assertSessionPageIdentity(params.page, "params.page");
+      } else if (
+        params.tabRef === undefined &&
+        params.snapshotRef === undefined &&
+        params.snapshotPath === undefined
+      ) {
+        throw new TypeError(
+          "recordKnowledge params must include page, tabRef, snapshotRef, or snapshotPath",
+        );
+      }
       assertString(params.guide, "params.guide");
       if (!Array.isArray(params.keywords)) {
         throw new TypeError("params.keywords must be an array");

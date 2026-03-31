@@ -109,6 +109,26 @@ const recordKnowledgeRequest = {
   },
 };
 
+const recordKnowledgeByTabRefRequest = {
+  requestId: "req_4b",
+  method: "recordKnowledge" as const,
+  params: {
+    tabRef: "tab_demo",
+    guide: "use dashboard",
+    keywords: ["dashboard"],
+  },
+};
+
+const recordKnowledgeBySnapshotRefRequest = {
+  requestId: "req_4c",
+  method: "recordKnowledge" as const,
+  params: {
+    snapshotRef: "snapshot_demo",
+    guide: "use dashboard",
+    keywords: ["dashboard"],
+  },
+};
+
 test("session rpc contract freezes the daemon method names and metadata keys", () => {
   assert.deepEqual(SESSION_RPC_METHODS, [
     "health",
@@ -188,6 +208,8 @@ test("session rpc requests and results keep the runtime ref contract explicit", 
 
   assert.doesNotThrow(() => assertSessionRpcRequest(querySnapshotRequest));
   assert.doesNotThrow(() => assertSessionRpcRequest(recordKnowledgeRequest));
+  assert.doesNotThrow(() => assertSessionRpcRequest(recordKnowledgeByTabRefRequest));
+  assert.doesNotThrow(() => assertSessionRpcRequest(recordKnowledgeBySnapshotRefRequest));
   assert.throws(
     () =>
       assertSessionRpcRequest({
@@ -198,6 +220,17 @@ test("session rpc requests and results keep the runtime ref contract explicit", 
         },
       }),
     /keywords/,
+  );
+  assert.throws(
+    () =>
+      assertSessionRpcRequest({
+        ...recordKnowledgeByTabRefRequest,
+        params: {
+          guide: "use dashboard",
+          keywords: ["dashboard"],
+        },
+      }),
+    /recordKnowledge.*page|recordKnowledge.*tabRef|recordKnowledge.*snapshotRef|recordKnowledge.*snapshotPath/i,
   );
 
   assert.doesNotThrow(() => assertSessionRpcResult(sessionResult));

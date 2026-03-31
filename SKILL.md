@@ -34,6 +34,13 @@ Treat this skill as browser automation first.
 3. Use `query-snapshot.js` only when you need extra page inspection to decide what to do next.
 4. Use knowledge commands only when the current run uncovers something stable that should help a later run on the same page.
 
+Before you give the final answer, run one `record-knowledge.js` write when either of these is true:
+
+- you had to use a full snapshot to locate the right element or recover context
+- a query or successful action revealed a stable reusable cue that should help later runs on the same page or page family
+
+When recording from the current browser context, prefer the low-friction path: pass `--tab-ref` or `--snapshot-ref` plus `--guide` and `--keywords`, and let the daemon fill in the current page identity.
+
 The agent does not need to reason about runtime ownership, sockets, or daemon internals here. The front door is the CLI command set.
 
 ## Command Surface
@@ -48,7 +55,7 @@ At the CLI level, the skill currently exposes these commands:
 - `node dist/scripts/select-tab.js --tab-ref <tabRef> --page-id <page-id>`
 - `node dist/scripts/query-snapshot.js --tab-ref <tabRef> --mode <search|auto|full> [--query <text>] [--role <role>] [--uid <uid>]`
 - `node dist/scripts/read-knowledge.js --origin <origin> --normalized-path <path>`
-- `node dist/scripts/record-knowledge.js --origin <origin> --normalized-path <path> --guide <text> [--keywords <comma-separated>]`
+- `node dist/scripts/record-knowledge.js --tab-ref <tabRef> --guide <text> --keywords <comma-separated>`
 
 Use the README as the denser operator-facing reference for installation and exact command details. After installation, call the compiled `dist/scripts/*.js` entrypoints rather than the `.ts` source files.
 
@@ -71,6 +78,7 @@ Use the README as the denser operator-facing reference for installation and exac
 
 - `read-knowledge.js` is for reuse. Use it when you want durable page guidance for a known page or workspace before acting.
 - `record-knowledge.js` is for successful discoveries. Use it only after you have learned something stable and reusable, not for temporary observations.
+- before finishing, record one reusable cue whenever full-snapshot exploration or an accurate query materially helped you find the right element
 - `query-snapshot.js` is not durable knowledge. It is for inspecting the current page state.
 - Do not start with knowledge commands unless the task already depends on previously learned page guidance.
 
@@ -112,7 +120,7 @@ Use the README as the denser operator-facing reference for installation and exac
   - standalone compatibility path: `--knowledge-file` only when you are intentionally bypassing runtime state
   - use it when the task may benefit from previously recorded page-specific guidance
 - `record-knowledge.js`
-  - required: `--origin`, `--normalized-path`, `--guide`, `--keywords`
+  - required: `--guide`, `--keywords`, plus either `--tab-ref`, `--snapshot-ref`, or `--origin` + `--normalized-path`
   - optional runtime hints: `--tab-ref`, `--snapshot-ref`, `--knowledge-ref`, `--rationale`
   - standalone compatibility path: `--knowledge-file` only when there is no `tabRef` or `snapshotRef`
   - use it after a run reveals a stable reusable cue such as a hidden control location, a naming quirk, or a reliable workflow hint

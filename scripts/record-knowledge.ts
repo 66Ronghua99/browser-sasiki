@@ -71,9 +71,16 @@ export async function runRecordKnowledgeCommand(args: Record<string, string | bo
   const knowledgeId = cliString(args, "id") ?? knowledgeRef;
   const knowledgeFile = cliString(args, "knowledge-file");
   const useStandaloneKnowledgeFile = knowledgeFile !== undefined && snapshotRef === undefined && tabRef === undefined;
+  const hasExplicitPage = origin !== undefined || normalizedPath !== undefined;
 
-  if (!origin || !normalizedPath) {
+  if (hasExplicitPage && (!origin || !normalizedPath)) {
     throw new Error("record-knowledge requires --origin and --normalized-path");
+  }
+  if (!hasExplicitPage && useStandaloneKnowledgeFile) {
+    throw new Error("record-knowledge requires --origin and --normalized-path");
+  }
+  if (!hasExplicitPage && snapshotRef === undefined && tabRef === undefined) {
+    throw new Error("record-knowledge requires --tab-ref, --snapshot-ref, or --origin and --normalized-path");
   }
   if (!guide) {
     throw new Error("record-knowledge requires --guide");
@@ -82,17 +89,19 @@ export async function runRecordKnowledgeCommand(args: Record<string, string | bo
     throw new Error("record-knowledge requires at least one keyword");
   }
 
-  const page = {
-    origin,
-    normalizedPath: normalizePagePath(normalizedPath),
-    title: cliTitle(args),
-  };
+  const page = hasExplicitPage
+    ? {
+        origin: origin!,
+        normalizedPath: normalizePagePath(normalizedPath!),
+        title: cliTitle(args),
+      }
+    : undefined;
 
   if (useStandaloneKnowledgeFile) {
     const createdAt = new Date().toISOString();
     const record = {
       id: knowledgeId ?? `knowledge_${Date.now()}`,
-      page,
+      page: page!,
       guide,
       keywords,
       createdAt,
@@ -117,7 +126,7 @@ export async function runRecordKnowledgeCommand(args: Record<string, string | bo
     ...(tabRef !== undefined ? { tabRef } : {}),
     ...(snapshotRef !== undefined ? { snapshotRef } : {}),
     ...(knowledgeId !== undefined ? { knowledgeRef: knowledgeId } : {}),
-    page,
+    ...(page !== undefined ? { page } : {}),
     guide,
     keywords,
     ...(cliString(args, "rationale") !== undefined ? { rationale: cliString(args, "rationale") } : {}),

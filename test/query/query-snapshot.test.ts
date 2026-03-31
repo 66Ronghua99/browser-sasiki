@@ -434,6 +434,94 @@ test("read-knowledge and record-knowledge can run through the session seam", asy
   }
 });
 
+test("record-knowledge allows tab-ref-only writes and lets the daemon infer page identity", async () => {
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  setSessionRpcRequestSenderForTesting(async (request) => {
+    requests.push({ method: request.method, params: request.params as Record<string, unknown> });
+
+    return {
+      ok: true as const,
+      record: {
+        id: "knowledge_from_tab",
+        page: {
+          origin: "https://x.com",
+          normalizedPath: "/zarazhang",
+          title: "Zara Zhang",
+        },
+        guide: "Scroll to the lower navigation cluster to find Article on profile pages.",
+        keywords: ["article", "profile", "scroll"],
+        createdAt: "2026-03-31T00:00:00.000Z",
+        updatedAt: "2026-03-31T00:00:00.000Z",
+      },
+    };
+  });
+
+  try {
+    const recordResult = await runRecordKnowledgeCommand({
+      "tab-ref": "x-work",
+      guide: "Scroll to the lower navigation cluster to find Article on profile pages.",
+      keywords: "article, profile, scroll",
+    });
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.method, "recordKnowledge");
+    assert.deepEqual(requests[0]?.params, {
+      tabRef: "x-work",
+      guide: "Scroll to the lower navigation cluster to find Article on profile pages.",
+      keywords: ["article", "profile", "scroll"],
+    });
+    assert.equal(recordResult.ok, true);
+    assert.equal(recordResult.record.id, "knowledge_from_tab");
+    assert.equal(recordResult.record.page.normalizedPath, "/zarazhang");
+  } finally {
+    setSessionRpcRequestSenderForTesting(undefined);
+  }
+});
+
+test("record-knowledge allows snapshot-ref-only writes and lets the daemon infer page identity", async () => {
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  setSessionRpcRequestSenderForTesting(async (request) => {
+    requests.push({ method: request.method, params: request.params as Record<string, unknown> });
+
+    return {
+      ok: true as const,
+      record: {
+        id: "knowledge_from_snapshot",
+        page: {
+          origin: "https://x.com",
+          normalizedPath: "/search",
+          title: "Search",
+        },
+        guide: "Search results often expose the profile entry directly from the people result cluster.",
+        keywords: ["search", "profile", "people"],
+        createdAt: "2026-03-31T00:00:00.000Z",
+        updatedAt: "2026-03-31T00:00:00.000Z",
+      },
+    };
+  });
+
+  try {
+    const recordResult = await runRecordKnowledgeCommand({
+      "snapshot-ref": "snapshot_demo",
+      guide: "Search results often expose the profile entry directly from the people result cluster.",
+      keywords: "search, profile, people",
+    });
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.method, "recordKnowledge");
+    assert.deepEqual(requests[0]?.params, {
+      snapshotRef: "snapshot_demo",
+      guide: "Search results often expose the profile entry directly from the people result cluster.",
+      keywords: ["search", "profile", "people"],
+    });
+    assert.equal(recordResult.ok, true);
+    assert.equal(recordResult.record.id, "knowledge_from_snapshot");
+    assert.equal(recordResult.record.page.normalizedPath, "/search");
+  } finally {
+    setSessionRpcRequestSenderForTesting(undefined);
+  }
+});
+
 test("query-snapshot rejects invalid --mode values explicitly", () => {
   assert.throws(
     () =>

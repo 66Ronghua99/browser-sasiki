@@ -91,6 +91,13 @@ node dist/scripts/navigate.js --tab-ref main --url https://example.com
 
 Use `query-snapshot.js --mode full` only when you explicitly need the full current snapshot, such as cold start inspection or debugging.
 
+Before you give the final answer for a browser task, record one durable cue when either of these happened during execution:
+
+- you needed full-snapshot exploration to find the correct element or recover context
+- `query-snapshot` or a successful action exposed a stable reusable cue that should help a later run
+
+For that write path, prefer `record-knowledge.js --tab-ref <tabRef> --guide ... --keywords ...` or the same pattern with `--snapshot-ref`; the daemon can now infer `origin`, `normalizedPath`, and `title` from the current runtime context.
+
 Chrome DevTools MCP snapshots now come back as accessibility-tree text headed by `## Latest page snapshot`. Element handles in that snapshot are `uid=...`, and `query-snapshot.js` is the single front door for reading or narrowing that snapshot locally.
 
 ## Command Reference
@@ -108,7 +115,7 @@ The main command groups are:
 - retrieval and knowledge
   - `node dist/scripts/query-snapshot.js --tab-ref <tabRef> --mode <search|auto|full> [--query <text>] [--role <role>] [--uid <uid>]`
   - `node dist/scripts/read-knowledge.js --origin <origin> --normalized-path <path>`
-  - `node dist/scripts/record-knowledge.js --origin <origin> --normalized-path <path> --guide <text> [--keywords <comma-separated>]`
+  - `node dist/scripts/record-knowledge.js --tab-ref <tabRef> --guide <text> --keywords <comma-separated>`
 
 ## Argument Glossary
 
@@ -218,7 +225,7 @@ node dist/scripts/read-knowledge.js --origin https://example.com --normalized-pa
 ```
 
 - `record-knowledge.js`
-  - required: `--origin`, `--normalized-path`, `--guide`, `--keywords`
+  - required: `--guide`, `--keywords`, plus either `--tab-ref`, `--snapshot-ref`, or `--origin` + `--normalized-path`
   - optional: `--tab-ref`, `--snapshot-ref`, `--knowledge-ref`, `--rationale`
   - standalone compatibility: `--knowledge-file` only when there is no runtime hint
   - purpose: save a durable reusable page cue
@@ -227,8 +234,6 @@ node dist/scripts/read-knowledge.js --origin https://example.com --normalized-pa
 ```bash
 node dist/scripts/record-knowledge.js \
   --tab-ref main \
-  --origin https://example.com \
-  --normalized-path /checkout \
   --guide "The promo code field is below the order summary." \
   --keywords "checkout,promo,summary"
 ```
@@ -257,5 +262,6 @@ node dist/scripts/record-knowledge.js \
 
 - Do not guess browser context. If you are unsure, capture first.
 - Do not treat this as a knowledge-harvesting skill. Its job is to finish browser work.
+- But once a full-snapshot recovery or a high-signal query uncovered a stable reusable cue, record that cue once before you finish.
 - Use `query-snapshot.js` as a local retrieval tool, not as a reason to inline whole snapshots into the chat.
 - Do not bypass the daemon by reading runtime temp files directly unless you are explicitly debugging. Query and knowledge commands are meant to go through the same runtime owner as capture and mutation actions.

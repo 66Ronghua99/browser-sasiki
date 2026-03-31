@@ -128,14 +128,20 @@ export class BrowserSessionDaemon {
         const pageListText = await bridge.newPage("chrome://newtab/", false);
         const activeTab = parseTabInventory(pageListText).find((tab) => tab.active);
         if (activeTab) {
-          return activeTab.index;
+          return {
+            pageId: activeTab.index,
+            pageListText,
+          };
         }
         const fallbackPageListText = await bridge.listPages();
         const fallbackActiveTab = parseTabInventory(fallbackPageListText).find((tab) => tab.active);
         if (!fallbackActiveTab) {
           throw new Error("unable to identify the new workspace tab from new_page output");
         }
-        return fallbackActiveTab.index;
+        return {
+          pageId: fallbackActiveTab.index,
+          pageListText: fallbackPageListText,
+        };
       },
     };
     this.actionDeps = {
@@ -356,15 +362,21 @@ export class BrowserSessionDaemon {
 
   private async recordKnowledge(params: SessionRpcRequestMap["recordKnowledge"]): Promise<unknown> {
     const timestamp = new Date().toISOString();
+    const resolvedPageContext = params.page === undefined ? await this.resolveSnapshotContext(params) : undefined;
     const snapshotPath = params.snapshotPath
+      ?? resolvedPageContext?.snapshotPath
       ?? (params.snapshotRef ? this.snapshotPathFromRef(params.snapshotRef) : undefined)
       ?? (params.tabRef ? (await this.tabBindings.read(params.tabRef)).snapshotPath : undefined);
+    const page = params.page ?? resolvedPageContext?.page;
+    if (!page) {
+      throw new Error("recordKnowledge requires page, tabRef, snapshotRef, or snapshotPath");
+    }
     const id = params.knowledgeRef ?? `knowledge_${randomUUID()}`;
     const record = {
       id,
       page: {
-        origin: params.page.origin,
-        normalizedPath: params.page.normalizedPath,
+        origin: page.origin,
+        normalizedPath: page.normalizedPath,
       },
       guide: params.guide,
       keywords: [...params.keywords],
@@ -381,7 +393,7 @@ export class BrowserSessionDaemon {
       record: {
         ...record,
         page: {
-          ...params.page,
+          ...page,
         },
       },
     };
@@ -389,7 +401,8 @@ export class BrowserSessionDaemon {
 
   private async resolveSnapshotContext(
     params: Pick<SessionRpcRequestMap["querySnapshot"], "tabRef" | "snapshotRef">
-      | Pick<SessionRpcRequestMap["readKnowledge"], "tabRef" | "snapshotRef" | "snapshotPath">,
+      | Pick<SessionRpcRequestMap["readKnowledge"], "tabRef" | "snapshotRef" | "snapshotPath">
+      | Pick<SessionRpcRequestMap["recordKnowledge"], "tabRef" | "snapshotRef" | "snapshotPath">,
   ): Promise<ResolvedSnapshotContext> {
     if (params.tabRef) {
       const binding = await this.tabBindings.read(params.tabRef);
