@@ -98,4 +98,4 @@ For snapshot retrieval, treat `query-snapshot.js` as the single local front door
 
 Keep the browser work inside one coherent task context at a time. Re-establish context when ownership becomes uncertain. Ask the skill for fresh retrieval instead of trusting stale browser state from earlier in the conversation. Save knowledge only when it is likely to improve a future run on the same page identity.
 
-Treat `tabRef` and `snapshotRef` as the agent-facing runtime contract. Do not design new flows around direct runtime-file reads unless you are explicitly debugging the daemon or inspecting compatibility behavior.
+Treat `tabRef` and `snapshotRef` as the agent-facing runtime contract. Normal CLI results intentionally omit runtime file paths so agents do not route around the daemon. Do not design new flows around direct runtime-file reads unless you are explicitly debugging the daemon or inspecting compatibility behavior.

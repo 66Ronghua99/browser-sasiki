@@ -29,7 +29,7 @@ function createActionResult(action: "navigate" | "click" | "type" | "press" | "s
   };
 }
 
-test("navigate forwards the session RPC request and keeps snapshotRef first", async () => {
+test("navigate forwards the session RPC request and hides snapshotPath from CLI output", async () => {
   const requests: Array<{ requestId: string; method: string; params: unknown }> = [];
   setSessionRpcRequestSenderForTesting(async (request) => {
     requests.push(request);
@@ -47,7 +47,8 @@ test("navigate forwards the session RPC request and keeps snapshotRef first", as
     tabRef: "tab_demo",
     url: "https://example.com/dashboard",
   });
-  assert.deepEqual(Object.keys(result).slice(0, 4), ["ok", "snapshotRef", "snapshotPath", "tabRef"]);
+  assert.deepEqual(Object.keys(result).slice(0, 3), ["ok", "snapshotRef", "tabRef"]);
+  assert.equal("snapshotPath" in result, false);
   assert.equal(result.action, "navigate");
 });
 
@@ -87,7 +88,8 @@ test("click, type, press, and select-tab forward the frozen request contract", a
   assert.equal(typed.action, "type");
   assert.equal(pressed.action, "press");
   assert.equal(selected.action, "select-tab");
-  assert.deepEqual(Object.keys(clicked).slice(0, 4), ["ok", "snapshotRef", "snapshotPath", "tabRef"]);
+  assert.deepEqual(Object.keys(clicked).slice(0, 3), ["ok", "snapshotRef", "tabRef"]);
+  assert.equal("snapshotPath" in clicked, false);
 });
 
 test("type rejects submit because the daemon-backed command still keeps the current explicit failure", async () => {

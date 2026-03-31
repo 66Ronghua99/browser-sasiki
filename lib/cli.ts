@@ -91,6 +91,8 @@ export async function sendSessionRpcRequest<M extends SessionRpcMethod>(
   return sender(request);
 }
 
+type WithoutSnapshotPath<T> = T extends { snapshotPath: string } ? Omit<T, "snapshotPath"> : T;
+
 export function withSnapshotRefFirst<T extends {
   ok: true;
   snapshotRef: string;
@@ -100,11 +102,10 @@ export function withSnapshotRefFirst<T extends {
   knowledgeHits: unknown;
   summary: string;
   knowledgeRef?: string;
-}>(result: T): T {
+}>(result: T): WithoutSnapshotPath<T> {
   const ordered: Record<string, unknown> = {
     ok: result.ok,
     snapshotRef: result.snapshotRef,
-    snapshotPath: result.snapshotPath,
     tabRef: result.tabRef,
     page: result.page,
     knowledgeHits: result.knowledgeHits,
@@ -116,11 +117,11 @@ export function withSnapshotRefFirst<T extends {
   }
 
   for (const [key, value] of Object.entries(result)) {
-    if (key in ordered) {
+    if (key === "snapshotPath" || key in ordered) {
       continue;
     }
     ordered[key] = value;
   }
 
-  return ordered as T;
+  return ordered as WithoutSnapshotPath<T>;
 }

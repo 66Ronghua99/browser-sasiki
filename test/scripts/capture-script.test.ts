@@ -32,7 +32,7 @@ function createCaptureResult() {
   };
 }
 
-test("capture forwards tab selection to the session sender and keeps snapshotRef first", async () => {
+test("capture forwards tab selection to the session sender and hides snapshotPath from CLI output", async () => {
   const requests: Array<{ requestId: string; method: string; params: unknown }> = [];
   setSessionRpcRequestSenderForTesting(async (request) => {
     requests.push(request);
@@ -48,9 +48,9 @@ test("capture forwards tab selection to the session sender and keeps snapshotRef
     tabRef: "main",
     tabIndex: 2,
   });
-  assert.deepEqual(Object.keys(result).slice(0, 4), ["ok", "snapshotRef", "snapshotPath", "tabRef"]);
+  assert.deepEqual(Object.keys(result).slice(0, 3), ["ok", "snapshotRef", "tabRef"]);
   assert.equal(result.snapshotRef, "snapshot_demo");
-  assert.equal(result.snapshotPath, "/tmp/snapshot.md");
+  assert.equal("snapshotPath" in result, false);
   assert.equal(result.tabs[0]?.active, true);
 });
 

@@ -14,11 +14,11 @@ import {
   requireCliStringArg,
 } from "../lib/browser-action.js";
 import { assertSessionRpcResult } from "../runtime/session-rpc-types.js";
-import type { ActionResult } from "../lib/types.js";
+import type { PublicActionResult } from "../lib/types.js";
 
 export async function runSelectTabCommand(
   args: { tabRef: string; pageId: number },
-): Promise<ActionResult> {
+): Promise<PublicActionResult> {
   const result = await sendSessionRpcRequest("selectTab", {
     tabRef: args.tabRef,
     pageId: args.pageId,

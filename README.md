@@ -239,6 +239,7 @@ node dist/scripts/record-knowledge.js \
 - Capture first if you are unsure what the current browser context is.
 - First capture now creates a new workspace tab by default, so it should not hijack the user's current active tab unless you explicitly pass `--tab-index`.
 - Treat returned `tabRef` and `snapshotRef` as the main runtime contract. `snapshotPath` is only compatibility/debug detail.
+- Normal CLI command output intentionally omits runtime file paths. Even if you know the temp files exist, use `tabRef` / `snapshotRef` and the CLI front door instead of directly reading runtime files during normal agent execution.
 - `query-snapshot.js --mode search` should include at least one selector such as `--query`, `--role`, or `--uid`.
 - `query-snapshot.js --mode auto` is the normal retrieval path.
 - `query-snapshot.js --mode full` is the fallback path when targeted retrieval is not enough.

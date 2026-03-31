@@ -9,11 +9,11 @@ import {
 } from "../lib/cli.js";
 import { requireCliStringArg } from "../lib/browser-action.js";
 import { assertSessionRpcResult } from "../runtime/session-rpc-types.js";
-import type { ActionResult } from "../lib/types.js";
+import type { PublicActionResult } from "../lib/types.js";
 
 export async function runNavigateCommand(
   args: { tabRef: string; url: string },
-): Promise<ActionResult> {
+): Promise<PublicActionResult> {
   const result = await sendSessionRpcRequest("navigate", {
     tabRef: args.tabRef,
     url: args.url,

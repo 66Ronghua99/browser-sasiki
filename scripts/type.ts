@@ -13,11 +13,11 @@ import {
   requireCliStringArg,
 } from "../lib/browser-action.js";
 import { assertSessionRpcResult } from "../runtime/session-rpc-types.js";
-import type { ActionResult } from "../lib/types.js";
+import type { PublicActionResult } from "../lib/types.js";
 
 export async function runTypeCommand(
   args: { tabRef: string; uid: string; text: string; slowly?: boolean; submit?: boolean },
-): Promise<ActionResult> {
+): Promise<PublicActionResult> {
   if (args.submit) {
     throw new Error("type submit is unsupported: Chrome DevTools MCP requires a separate press command");
   }

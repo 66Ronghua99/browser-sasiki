@@ -38,6 +38,12 @@ export interface ActionResult extends SkillResultBase {
   action: SkillAction;
 }
 
+export type PublicSkillResultBase = Omit<SkillResultBase, "snapshotPath">;
+
+export type PublicCaptureResult = Omit<CaptureResult, "snapshotPath">;
+
+export type PublicActionResult = Omit<ActionResult, "snapshotPath">;
+
 function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError(`${label} must be an object`);

@@ -8,12 +8,12 @@ import {
   withSnapshotRefFirst,
 } from "../lib/cli.js";
 import { optionalCliStringArg, parseCliIntegerArg } from "../lib/browser-action.js";
-import type { CaptureResult } from "../lib/types.js";
+import type { PublicCaptureResult } from "../lib/types.js";
 import { assertSessionCaptureResult } from "../runtime/session-rpc-types.js";
 
 export async function runCaptureCommand(
   args: { tabIndex?: number; tabRef?: string },
-): Promise<CaptureResult> {
+): Promise<PublicCaptureResult> {
   const params: { tabIndex?: number; tabRef?: string } = {};
   if (args.tabIndex !== undefined) {
     params.tabIndex = args.tabIndex;
