@@ -70,6 +70,14 @@ interface ResolvedSnapshotContext {
   page: SkillPageIdentity;
 }
 
+function hasSnapshotPath(value: object): value is { snapshotPath?: string } {
+  return "snapshotPath" in value;
+}
+
+function resolveExplicitSnapshotPath(snapshotPath: string | undefined): string | undefined {
+  return snapshotPath ? path.resolve(snapshotPath) : undefined;
+}
+
 export class BrowserSessionDaemon {
   private readonly env: Record<string, string | undefined>;
   private readonly paths: SessionPaths;
@@ -299,7 +307,7 @@ export class BrowserSessionDaemon {
 
   private async querySnapshot(
     params: SessionRpcRequestMap["querySnapshot"],
-  ): Promise<SnapshotQueryResult & Partial<SessionRpcResultBase> & { snapshotRef?: string; snapshotPath?: string }> {
+  ): Promise<SnapshotQueryResult & Partial<SessionRpcResultBase> & { snapshotRef?: string }> {
     const resolved = await this.resolveSnapshotContext(params);
     const knowledgeHits = await this.readKnowledgeHits(resolved.page);
     const queryResult = querySnapshotText({
@@ -318,7 +326,6 @@ export class BrowserSessionDaemon {
       ...(params.includeSnapshot ? { snapshotText: resolved.snapshotText } : {}),
       ...(resolved.tabRef !== undefined ? { tabRef: resolved.tabRef } : {}),
       snapshotRef: resolved.snapshotRef,
-      snapshotPath: resolved.snapshotPath,
       knowledgeHits,
       summary: queryResult.summary,
     };
@@ -379,7 +386,7 @@ export class BrowserSessionDaemon {
   }
 
   private async resolveSnapshotContext(
-    params: Pick<SessionRpcRequestMap["querySnapshot"], "tabRef" | "snapshotRef" | "snapshotPath">
+    params: Pick<SessionRpcRequestMap["querySnapshot"], "tabRef" | "snapshotRef">
       | Pick<SessionRpcRequestMap["readKnowledge"], "tabRef" | "snapshotRef" | "snapshotPath">,
   ): Promise<ResolvedSnapshotContext> {
     if (params.tabRef) {
@@ -394,11 +401,8 @@ export class BrowserSessionDaemon {
       };
     }
 
-    const snapshotPath = params.snapshotPath
-      ? path.resolve(params.snapshotPath)
-      : params.snapshotRef
-        ? this.snapshotPathFromRef(params.snapshotRef)
-        : undefined;
+    const snapshotPath = resolveExplicitSnapshotPath(hasSnapshotPath(params) ? params.snapshotPath : undefined)
+      ?? (params.snapshotRef ? this.snapshotPathFromRef(params.snapshotRef) : undefined);
     if (!snapshotPath) {
       throw new Error("snapshot lookup requires tabRef, snapshotRef, or snapshotPath");
     }

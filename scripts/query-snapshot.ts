@@ -1,4 +1,3 @@
-import path from "node:path";
 import process from "node:process";
 
 import { formatCliError, isDirectCliInvocation, readCliArgs, sendSessionRpcRequest } from "../lib/cli.js";
@@ -11,7 +10,6 @@ export interface QuerySnapshotCliArgs {
   mode: "search" | "auto" | "full";
   tabRef?: string;
   snapshotRef?: string;
-  snapshotPath?: string;
   snapshotText?: string;
   text?: string;
   role?: string;
@@ -57,7 +55,6 @@ function resolveHandleSelector(uid: string | undefined, ref: string | undefined)
 export function parseQuerySnapshotCliArgs(args: Record<string, string | boolean>): QuerySnapshotCliArgs {
   const tabRef = optionalCliStringArg(args, "tab-ref", "tabRef");
   const snapshotRef = optionalCliStringArg(args, "snapshot-ref", "snapshotRef");
-  const snapshotPath = optionalCliStringArg(args, "snapshot-path", "snapshotPath");
   const snapshotText = optionalCliStringArg(args, "snapshot-text", "snapshotText");
   const text = optionalCliStringArg(args, "text", "text");
   const query = optionalCliStringArg(args, "query", "query");
@@ -73,8 +70,12 @@ export function parseQuerySnapshotCliArgs(args: Record<string, string | boolean>
     throw new Error("query-snapshot no longer accepts --knowledge-file; daemon-backed retrieval owns knowledge hits");
   }
 
-  if (tabRef === undefined && snapshotRef === undefined && snapshotPath === undefined && snapshotText === undefined) {
-    throw new Error("query-snapshot requires --tab-ref, --snapshot-ref, --snapshot-path, or --snapshot-text");
+  if (optionalCliStringArg(args, "snapshot-path", "snapshotPath") !== undefined) {
+    throw new Error("query-snapshot no longer accepts --snapshot-path; use --tab-ref, --snapshot-ref, or --snapshot-text");
+  }
+
+  if (tabRef === undefined && snapshotRef === undefined && snapshotText === undefined) {
+    throw new Error("query-snapshot requires --tab-ref, --snapshot-ref, or --snapshot-text");
   }
 
   const selectorText = text ?? query;
@@ -93,7 +94,6 @@ export function parseQuerySnapshotCliArgs(args: Record<string, string | boolean>
     mode,
     tabRef,
     snapshotRef,
-    snapshotPath,
     snapshotText,
     text: selectorText,
     role,
@@ -109,7 +109,6 @@ function buildSnapshotQueryRequest(args: QuerySnapshotCliArgs): SessionRpcReques
   return {
     ...(args.tabRef !== undefined ? { tabRef: args.tabRef } : {}),
     ...(args.snapshotRef !== undefined ? { snapshotRef: args.snapshotRef } : {}),
-    ...(args.snapshotPath !== undefined ? { snapshotPath: path.resolve(args.snapshotPath) } : {}),
     mode: args.mode,
     ...(args.text !== undefined ? { query: args.text } : {}),
     ...(args.role !== undefined ? { role: args.role } : {}),
@@ -124,14 +123,15 @@ function resolveSessionQueryResult(value: unknown): ReturnType<typeof querySnaps
 
   const result = value as Record<string, unknown>;
   if (result.mode === "search" || result.mode === "auto" || result.mode === "full") {
-    return value as ReturnType<typeof querySnapshotText>;
+    const { snapshotPath: _snapshotPath, ...publicResult } = result;
+    return publicResult as unknown as ReturnType<typeof querySnapshotText>;
   }
 
   throw new Error("querySnapshot session response must be a completed query result");
 }
 
 export async function runQuerySnapshotCommand(args: QuerySnapshotCliArgs): Promise<ReturnType<typeof querySnapshotText>> {
-  if (args.snapshotText !== undefined && args.tabRef === undefined && args.snapshotRef === undefined && args.snapshotPath === undefined) {
+  if (args.snapshotText !== undefined && args.tabRef === undefined && args.snapshotRef === undefined) {
     const page = (() => {
       if (args.origin && args.path) {
         return {

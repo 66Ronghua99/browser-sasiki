@@ -24,7 +24,7 @@ export const SESSION_RPC_REQUEST_FIELDS = {
   type: ["tabRef", "uid", "text"],
   press: ["tabRef", "key"],
   selectTab: ["tabRef", "pageId"],
-  querySnapshot: ["tabRef", "snapshotRef", "snapshotPath", "mode", "query", "role", "uid", "includeSnapshot"],
+  querySnapshot: ["tabRef", "snapshotRef", "mode", "query", "role", "uid", "includeSnapshot"],
   readKnowledge: ["tabRef", "snapshotRef", "snapshotPath", "knowledgeRef", "page"],
   recordKnowledge: ["tabRef", "snapshotRef", "snapshotPath", "page", "guide", "keywords", "rationale", "knowledgeRef"],
   shutdown: [],
@@ -62,7 +62,6 @@ export interface SessionRpcRequestMap {
   querySnapshot: {
     tabRef?: string;
     snapshotRef?: string;
-    snapshotPath?: string;
     mode?: "search" | "auto" | "full";
     query?: string;
     role?: string;
@@ -259,17 +258,14 @@ function assertSessionRpcParams(method: SessionRpcMethod, params: unknown): asse
       }
       return;
     case "querySnapshot":
-      if (params.tabRef === undefined && params.snapshotRef === undefined && params.snapshotPath === undefined) {
-        throw new TypeError("querySnapshot params must include tabRef, snapshotRef, or snapshotPath");
+      if (params.tabRef === undefined && params.snapshotRef === undefined) {
+        throw new TypeError("querySnapshot params must include tabRef or snapshotRef");
       }
       if (params.tabRef !== undefined) {
         assertString(params.tabRef, "params.tabRef");
       }
       if (params.snapshotRef !== undefined) {
         assertString(params.snapshotRef, "params.snapshotRef");
-      }
-      if (params.snapshotPath !== undefined) {
-        assertString(params.snapshotPath, "params.snapshotPath");
       }
       if (params.mode !== undefined && params.mode !== "search" && params.mode !== "auto" && params.mode !== "full") {
         throw new TypeError("params.mode must be search, auto, or full");

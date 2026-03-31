@@ -193,10 +193,10 @@ node dist/scripts/select-tab.js --tab-ref main --page-id 4
   - accepted snapshot sources:
     - `--tab-ref`
     - `--snapshot-ref`
-    - `--snapshot-path`
     - `--snapshot-text` for local standalone querying
   - in `search` mode, also require at least one selector such as `--query` / `--text`, `--role`, `--uid`, or `--ref`
   - purpose: retrieve a focused slice of the latest bound snapshot
+  - note: normal query results intentionally omit runtime file paths; `snapshotPath` is no longer an accepted query argument
   - examples:
 
 ```bash
@@ -238,7 +238,7 @@ node dist/scripts/record-knowledge.js \
 - Use one `--tab-ref` consistently for one browser task context.
 - Capture first if you are unsure what the current browser context is.
 - First capture now creates a new workspace tab by default, so it should not hijack the user's current active tab unless you explicitly pass `--tab-index`.
-- Treat returned `tabRef` and `snapshotRef` as the main runtime contract. `snapshotPath` is only compatibility/debug detail.
+- Treat returned `tabRef` and `snapshotRef` as the main runtime contract. Normal agent flows should not depend on runtime file paths.
 - Normal CLI command output intentionally omits runtime file paths. Even if you know the temp files exist, use `tabRef` / `snapshotRef` and the CLI front door instead of directly reading runtime files during normal agent execution.
 - `query-snapshot.js --mode search` should include at least one selector such as `--query`, `--role`, or `--uid`.
 - `query-snapshot.js --mode auto` is the normal retrieval path.

@@ -242,6 +242,7 @@ test("query-snapshot resolves the latest bound snapshot from --tab-ref", async (
     assert.equal(result.matches.length, 1);
     assert.equal(result.matches[0]?.uid, "1_1");
     assert.equal("snapshotText" in result, false);
+    assert.equal("snapshotPath" in result, false);
   } finally {
     setSessionRpcRequestSenderForTesting(undefined);
   }
@@ -296,6 +297,7 @@ test("query-snapshot accepts --snapshot-ref and delegates to the session seam", 
     assert.equal(result.matches[0]?.uid, "1_1");
     assert.equal(result.page.normalizedPath, "/chat/inbox/current");
     assert.equal("snapshotText" in result, false);
+    assert.equal("snapshotPath" in result, false);
   } finally {
     setSessionRpcRequestSenderForTesting(undefined);
   }
@@ -529,59 +531,14 @@ test("query-snapshot accepts the documented --uid selector and preserves legacy 
   assert.equal(legacyAliasResult.matches[0]?.uid, "1_3");
 });
 
-test("query-snapshot still supports explicit --snapshot-path after parser validation", async () => {
-  const harness = await createQueryHarness();
-  const snapshotPath = path.join(harness.snapshotsDir, "explicit.md");
-  await writeFile(snapshotPath, snapshotText, "utf8");
-
-  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
-  setSessionRpcRequestSenderForTesting(async (request) => {
-    requests.push({ method: request.method, params: request.params as Record<string, unknown> });
-
-    return {
-      ok: true as const,
-      mode: "search" as const,
-      tabRef: "tab_demo",
-      snapshotRef: "snapshot_demo",
-      snapshotPath,
-      page: {
-        origin: "https://example.com",
-        normalizedPath: "/chat/inbox/current",
-        title: "Inbox",
-      },
-      knowledgeHits: [],
-      summary: "resolved from the session",
-      matches: [
-        {
-          lineNumber: 2,
-          raw: '  uid=1_1 button "Customer messages"',
-          role: "button",
-          text: "Customer messages",
-          uid: "1_1",
-          ref: "1_1",
-        },
-      ],
-    };
-  });
-
-  try {
-    const result = await runQuerySnapshotCommand(
+test("query-snapshot rejects legacy --snapshot-path so agents stay on tabRef or snapshotRef", () => {
+  assert.throws(
+    () =>
       parseQuerySnapshotCliArgs({
-        "snapshot-path": snapshotPath,
+        "snapshot-path": "/tmp/browser-skill/snapshots/explicit.md",
         mode: "search",
         query: "Customer messages",
       }),
-    );
-
-    assert.equal(requests.length, 1);
-    assert.equal(requests[0]?.method, "querySnapshot");
-    assert.equal(requests[0]?.params.snapshotPath, snapshotPath);
-    assert.equal("includeSnapshot" in (requests[0]?.params ?? {}), false);
-    assertSearchResult(result);
-    assert.equal(result.matches.length, 1);
-    assert.equal(result.matches[0]?.uid, "1_1");
-    assert.equal("snapshotText" in result, false);
-  } finally {
-    setSessionRpcRequestSenderForTesting(undefined);
-  }
+    /no longer accepts --snapshot-path/i,
+  );
 });

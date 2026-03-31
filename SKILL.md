@@ -48,7 +48,7 @@ Use the README as the denser operator-facing reference for installation and exac
 ### Argument Meanings
 
 - `tabRef`: the agent-facing logical workspace handle. It points to one bound Chrome tab and its latest snapshot.
-- `snapshotRef`: the daemon-generated handle for a stored snapshot. Prefer this over `snapshotPath` in new flows.
+- `snapshotRef`: the daemon-generated handle for a stored snapshot. This is the only snapshot lookup handle normal agent flows should depend on.
 - `uid`: the Chrome DevTools accessibility-tree element handle from the latest snapshot. This is the canonical element selector.
 - `page-id`: the Chrome DevTools page handle used by `list_pages` / `select_page`.
 - `tab-index`: capture-only explicit override for binding an already open tab instead of creating a new workspace tab.
@@ -80,9 +80,10 @@ Use the README as the denser operator-facing reference for installation and exac
   - purpose: rebind a workspace to another already open Chrome page
 - `query-snapshot.js`
   - required: `--mode`
-  - requires one snapshot source: `--tab-ref`, `--snapshot-ref`, `--snapshot-path`, or `--snapshot-text`
+  - requires one snapshot source: `--tab-ref`, `--snapshot-ref`, or `--snapshot-text`
   - `search` mode also requires at least one selector: `--query` / `--text`, `--role`, `--uid`, or `--ref`
   - only `full` results, or `auto` when it truly falls back to full, should include `snapshotText`
+  - `snapshotPath` is no longer part of the query front door or normal CLI output
   - `--knowledge-file` is no longer accepted on the daemon-backed path
 - `read-knowledge.js`
   - daemon path: use `--tab-ref`, `--snapshot-ref`, `--knowledge-ref`, or `--origin` + `--normalized-path`
