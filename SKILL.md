@@ -1,19 +1,19 @@
 ---
 name: browser-sasiki
-description: Use the skill for every browser automation work, which will get cheaper and faster over time by reusing page knowledge gathered during execution.
+description: You should use this skill for all browser automation tasks. Through using this skill, browser automation will get cheaper and faster over time by reusing page knowledge gathered during execution.
 ---
 
 # Browser Sasiki
 
 ## Overview
 
-Use this skill for browser automation tasks in a real Chrome session. The daemon owns one reusable browser runtime, attaches to Chrome through direct DevTools access, and exposes a workspace-first HTTP surface. Think in terms of goal-driven browser work: open a workspace, act in the right tab, inspect only when needed, and leave one durable cue behind when this run discovered something reusable.
+Use this skill for browser automation tasks in a real Chrome session. This tool exposes a workspace-first HTTP surface. Think of the process in terms of goal-driven browser work: you open a workspace, act in the tab groups, inspect pages to obtain necessary information, and leave durable cues/knowledge whenever this run discovered something reusable in the future.
 
 ## Before You Start
 
 Make sure the target Chrome session is already running with remote debugging enabled.
 
-Start or reuse the daemon through the startup helper:
+Ensure the daemon started through the startup helper:
 
 `node scripts/ensure-browser-session.mjs`
 
@@ -25,76 +25,32 @@ If you need to read health explicitly after that, use:
 
 `curl -s "$BASE_URL/health"`
 
-## Decide The Next Call
+## Regular workflow
 
 - Use `POST /workspaces` when you need a fresh workspace entry for a task.
 - Use `GET /tabs` when you need the current tab inventory for a workspace.
 - Use `POST /select-tab` when you know the workspace tab you want to work in.
 - Use `POST /navigate`, `POST /click`, `POST /type`, `POST /press`, and `POST /query` when you already know the next browser action.
-- Use `POST /record-knowledge` before the final answer when this run exposed a stable reusable cue.
+- Use `POST /query` with `search` mode first if you have a potential target in mind but don't know where it is; use `full` mode only if you need to inspect the page structure or recover context.
+- Use `POST /record-knowledge` during the process whenever a stable reusable cue is exposed. A `full` mode query usually indicates the need for potentially reusable information. 
 
 Keep the loop small:
 
 1. Open or refresh the workspace.
 2. Select the tab you want.
 3. Do the next browser action.
-4. Inspect only if the next action is still unclear.
-5. Finish the task, then record durable knowledge if the write rule fired.
+4. Inspect if the next action is still unclear.
+5. Record knowledge if you found something reusable.
+6. Loop task 2-5 until the task is complete and finish.
 
-## Knowledge Model
+## How To Use Knowledge
 
 - knowledgeHits auto-load on page match during workspace creation, tab actions, and `/query`.
 - Consume those returned `knowledgeHits` directly as the reusable page guidance for the current run.
-- `/query` is for the current page state, not durable knowledge.
-- There is no separate manual knowledge-read step in the normal flow.
 
-## Parameter Guide
+## When To Record Knowledge
 
-### Runtime Target
-
-Use exactly one workspace scope:
-
-- `workspaceRef`: live workspace query. The daemon works against the current browser state for that workspace.
-- `workspaceTabRef`: explicit tab selection within a workspace. The daemon resolves that tab before running the action.
-
-### Query Mode
-
-Choose one explicit mode for `/query`:
-
-- `mode: "search"`: return compact `matches` only. Each match is concise (`lineNumber`, `role`, `text`, `uid`) and nested duplicate text hits are trimmed when a richer parent element already covers the same cue. Use this when you need to find an element before a click or type.
-- `mode: "full"`: return the whole `snapshotText`. Use this when you need to inspect the page structure or recover context.
-
-### Search Selectors
-
-Use selector fields only with `mode: "search"`:
-
-- `query`: text contains match
-- `role`: exact role match such as `button` or `textbox`
-- `uid`: exact element handle from the latest snapshot
-
-`uid` is the only public element handle for browser actions and `/query`. Do not send `ref`.
-
-### Action Parameters
-
-- `/workspaces`: no body
-- `/tabs`: query `workspaceRef`
-- `/select-tab`: query `workspaceRef` and `workspaceTabRef`
-- `/navigate`: query `workspaceRef`, optional `workspaceTabRef`, and body `url`
-- `/click`: query `workspaceRef`, optional `workspaceTabRef`, and body `uid`
-- `/type`: query `workspaceRef`, optional `workspaceTabRef`, and body `uid` plus `text`
-- `/press`: query `workspaceRef`, optional `workspaceTabRef`, and body `key`
-- `/query`: query `workspaceRef`, optional `workspaceTabRef`, and body `mode` plus selectors
-- `/record-knowledge`: query `workspaceRef`, optional `workspaceTabRef`, and body `guide`, `keywords`, and required `rationale`
-
-## When To Use Workspace Scope
-
-- Use `workspaceRef` when you want the current live workspace state.
-- Use `workspaceTabRef` when you intentionally want a specific tab inside that workspace.
-- If your plan is “query again for something newer”, stay in the same workspace and use the live workspace scope rather than freezing an older snapshot.
-
-## Record Rule
-
-You must successfully call `record-knowledge` before the final answer when either of these is true:
+You **MUST** successfully call `record-knowledge` when either of these is true:
 
 - you have used `/query` with full-page exploration to locate the right element or recover context, and that exploration exposed reusable keywords or page cues that can help later runs read less irrelevant context
 - a query result or successful action revealed a stable reusable cue for the same page or page family
@@ -105,14 +61,6 @@ Before writing, compare the new cue with the current `knowledgeHits`:
 - if the cue is genuinely new, record it once; repeated writes for the same page + guide + keyword set are treated idempotently
 
 The goal is to leave one reusable hint behind, not to restate knowledge that is already loading correctly.
-
-## Common Failure Mode
-
-- `sleep` does not refresh the current page state. If you need newer page state, query again or perform another browser action.
-- `mode` is required for `/query`.
-- Use `search` when you want compact element lookup; use `full` when you need whole-page inspection.
-- Do not send Playwright-style `element` payloads.
-- There is no `/browser-run-code` endpoint in this skill.
 
 ## Endpoints
 
@@ -128,15 +76,19 @@ The goal is to leave one reusable hint behind, not to restate knowledge that is 
 - `POST /record-knowledge`
 - `POST /shutdown`
 
-## Startup Front Door
+### Query Parameters
 
-Use `node scripts/ensure-browser-session.mjs` only to start or reuse the daemon.
+- `/workspaces`: no body
+- `/tabs`: query `workspaceRef`
+- `/select-tab`: query `workspaceRef` and `workspaceTabRef`
+- `/navigate`: query `workspaceRef`, optional `workspaceTabRef`, and body `url`
+- `/click`: query `workspaceRef`, optional `workspaceTabRef`, and body `uid`
+- `/type`: query `workspaceRef`, optional `workspaceTabRef`, and body `uid` plus `text`
+- `/press`: query `workspaceRef`, optional `workspaceTabRef`, and body `key`
+- `/query`: query `workspaceRef`, optional `workspaceTabRef`, and body `mode` plus selectors
+- `/record-knowledge`: query `workspaceRef`, optional `workspaceTabRef`, and body `guide`, `keywords`, and required `rationale`
 
-- It waits for `/health` and prints the current session metadata.
-- After that, keep using the daemon's HTTP endpoints directly.
-- Do not introduce a second shell RPC layer for browser actions.
-
-## Request Examples
+### Examples
 
 ```bash
 node scripts/ensure-browser-session.mjs
@@ -171,6 +123,40 @@ curl -s -X POST "$BASE_URL/record-knowledge?workspaceRef=workspace_demo" \
   -H 'content-type: application/json' \
   -d '{"guide":"Promo code field is below the order summary.","keywords":["checkout","promo","summary"],"rationale":"The order summary and promo field are visible together on the checkout page."}'
 ```
+
+## Detailed Parameter Explanations
+
+### Workspace and Tab Scope
+
+Use exactly one workspace scope:
+
+- `workspaceRef`: live workspace query. The daemon works against the current browser state for that workspace.
+- `workspaceTabRef`: explicit tab selection within a workspace. The daemon resolves that tab before running the action.
+
+### Query Snapshots
+
+Choose one explicit mode for `/query`:
+
+- `mode: "search"`: return compact `matches` only. Each match is concise (`lineNumber`, `role`, `text`, `uid`) and can assist you to find an element reference and its contents. **This should be your default choice as it saves tokens and context.**
+- `mode: "full"`: return the whole `snapshotText`. **Use this only if you do not/cannot find anything helpful via search mode and need to inspect the page structure.** 
+
+#### Query Search Selectors
+
+Use selector fields only with `mode: "search"`:
+
+- `query`: text contains match
+- `role`: exact role match such as `button` or `textbox`
+- `uid`: exact element handle from the latest snapshot
+
+`uid` is the only public element handle for browser actions and `/query`. Do not send `ref`.
+
+## Common Failure Mode
+
+- `sleep` does not refresh the current page state. If you need newer page state, query again or perform another browser action.
+- `mode` is required for `/query`.
+- Use `search` when you want compact element lookup; use `full` when you need whole-page inspection.
+- Do not send Playwright-style `element` payloads.
+- There is no `/browser-run-code` endpoint in this skill.
 
 ## Practical Rules
 
