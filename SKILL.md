@@ -1,13 +1,13 @@
 ---
 name: browser-sasiki
-description: You should use this skill for all browser automation tasks. Through using this skill, browser automation will get cheaper and faster over time by reusing page knowledge gathered during execution.
+description: Use when doing browser automation in a real Chrome session and you want a workspace-first, direct DevTools-backed skill that gets cheaper over time by reusing page knowledge gathered during execution.
 ---
 
 # Browser Sasiki
 
 ## Overview
 
-Use this skill for browser automation tasks in a real Chrome session. This tool exposes a workspace-first HTTP surface. Think of the process in terms of goal-driven browser work: you open a workspace, act in the tab groups, inspect pages to obtain necessary information, and leave durable cues/knowledge whenever this run discovered something reusable in the future.
+Use this skill for browser automation tasks in a real Chrome session. This tool exposes a workspace-first HTTP surface backed by a direct DevTools runtime. Think of the process in terms of goal-driven browser work: you open a workspace, act in the tab groups, inspect pages to obtain necessary information, and leave durable cues/knowledge whenever this run discovered something reusable in the future.
 
 ## Before You Start
 

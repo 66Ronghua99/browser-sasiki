@@ -2,6 +2,8 @@
 
 Browser Sasiki is a workspace-first browser automation skill for coding agents. Its front door is HTTP-only: one long-lived daemon owns the attached Chrome session, and agents interact with it through direct DevTools-backed JSON endpoints instead of per-command CLI wrappers.
 
+简体中文版见 [README.zh-CN.md](README.zh-CN.md).
+
 ## Source Of Truth
 
 - In the Sasiki monorepo, this directory `skill/` is the single source of truth.
@@ -22,6 +24,34 @@ One line you can send to a coding agent:
 ```text
 Please install the `browser-sasiki` skill from the GitHub repo `66Ronghua99/browser-sasiki` at path `.`, restart your agent if needed, and then use that skill for browser automation tasks.
 ```
+
+### Manual local install for Codex
+
+If you want to keep a local checkout and make Codex load the skill from that checkout, use a symlink instead of copying files.
+
+From the standalone mirror repo:
+
+```bash
+git clone https://github.com/66Ronghua99/browser-sasiki.git ~/codes/browser-sasiki
+mkdir -p ~/.codex/skills
+rm -rf ~/.codex/skills/browser-sasiki
+ln -s ~/codes/browser-sasiki ~/.codex/skills/browser-sasiki
+cd ~/codes/browser-sasiki
+npm install
+```
+
+From the Sasiki monorepo source of truth:
+
+```bash
+git clone https://github.com/66Ronghua99/Sasiki.git ~/codes/Sasiki
+mkdir -p ~/.codex/skills
+rm -rf ~/.codex/skills/browser-sasiki
+ln -s ~/codes/Sasiki/skill ~/.codex/skills/browser-sasiki
+cd ~/codes/Sasiki/skill
+npm install
+```
+
+Restart Codex after the install so the new skill is loaded. If you update dependencies later, run `npm install` again from the same skill root.
 
 ## Working Directory
 
@@ -161,4 +191,18 @@ Run the skill test suite from the skill root:
 
 ```bash
 npm test
+```
+
+## Publish
+
+`skill/` stays the single source of truth. Publish the standalone mirror from the Sasiki repo root:
+
+```bash
+node scripts/publish
+```
+
+To preview the subtree split and push without mutating the remote:
+
+```bash
+node scripts/publish --dry-run
 ```
