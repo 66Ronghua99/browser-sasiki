@@ -29,9 +29,8 @@ export function assertSessionMetadata(value) {
     value.connectionMode !== null
     && value.connectionMode !== "browserUrl"
     && value.connectionMode !== "http"
-    && value.connectionMode !== "autoConnect"
   ) {
-    throw new TypeError("connectionMode must be browserUrl, http, autoConnect, or null");
+    throw new TypeError("connectionMode must be browserUrl, http, or null");
   }
   if (value.connectionMode === "browserUrl" && value.browserUrl === null) {
     throw new TypeError("browserUrl must be set when connectionMode is browserUrl");

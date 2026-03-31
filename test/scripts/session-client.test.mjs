@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
-  assertSessionCaptureResult,
-  assertSessionRpcResult,
+  assertWorkspaceResult,
+  assertWorkspaceTabResult,
+  assertWorkspaceTabsResult,
   assertSessionRpcRequest,
   SESSION_RPC_REQUEST_FIELDS,
   SESSION_RPC_METHODS,
@@ -16,12 +18,10 @@ import {
   SESSION_METADATA_KEYS,
 } from "../../scripts/session-metadata.mjs";
 import { ensureSessionDaemon, sendSessionRpcRequest } from "../../scripts/session-client.mjs";
-import { startBrowserSessionDaemon } from "../../scripts/http-client.mjs";
 
-const sessionResult = {
+const workspaceResult = {
   ok: true,
-  tabRef: "tab_demo",
-  snapshotRef: "snapshot_demo",
+  workspaceRef: "workspace_demo",
   page: {
     origin: "https://example.com",
     normalizedPath: "/dashboard",
@@ -31,11 +31,11 @@ const sessionResult = {
   summary: "ready",
 };
 
-const captureResult = {
-  ...sessionResult,
+const workspaceListResult = {
+  ...workspaceResult,
   tabs: [
     {
-      index: 1,
+      workspaceTabRef: "workspace_tab_demo",
       title: "Dashboard",
       url: "https://example.com/dashboard",
       active: true,
@@ -54,105 +54,96 @@ const sessionMetadata = {
   runtimeVersion: "0.1.0",
 };
 
-const navigateRequest = {
+const openWorkspaceRequest = {
   requestId: "req_1",
+  method: "openWorkspace",
+  params: {},
+};
+
+const listTabsRequest = {
+  requestId: "req_2",
+  method: "listTabs",
+  params: {
+    workspaceRef: "workspace_demo",
+  },
+};
+
+const workspaceTabResult = {
+  ...workspaceResult,
+  workspaceTabRef: "workspace_tab_demo",
+};
+
+const navigateRequest = {
+  requestId: "req_3",
   method: "navigate",
   params: {
-    tabRef: "tab_demo",
+    workspaceRef: "workspace_demo",
     url: "https://example.com/dashboard",
   },
 };
 
-const captureRequest = {
-  requestId: "req_2",
-  method: "capture",
+const queryRequest = {
+  requestId: "req_4",
+  method: "query",
   params: {
-    tabRef: "tab_demo",
-  },
-};
-
-const captureByIndexRequest = {
-  requestId: "req_2b",
-  method: "capture",
-  params: {
-    pageId: 2,
-  },
-};
-
-const captureEmptyRequest = {
-  requestId: "req_2c",
-  method: "capture",
-  params: {},
-};
-
-const querySnapshotRequest = {
-  requestId: "req_3",
-  method: "querySnapshot",
-  params: {
-    snapshotRef: "snapshot_demo",
+    workspaceRef: "workspace_demo",
     mode: "search",
-    uid: "1_1",
+    query: "Submit",
   },
 };
 
 const recordKnowledgeRequest = {
-  requestId: "req_4",
+  requestId: "req_5",
   method: "recordKnowledge",
   params: {
-    page: {
-      origin: "https://example.com",
-      normalizedPath: "/dashboard",
-      title: "Dashboard",
-    },
+    workspaceRef: "workspace_demo",
     guide: "use dashboard",
     keywords: ["dashboard"],
+    rationale: "The dashboard header confirms the page is ready.",
   },
 };
 
-const recordKnowledgeByTabRefRequest = {
-  requestId: "req_4b",
-  method: "recordKnowledge",
+const selectTabRequest = {
+  requestId: "req_6",
+  method: "selectTab",
   params: {
-    tabRef: "tab_demo",
-    guide: "use dashboard",
-    keywords: ["dashboard"],
+    workspaceRef: "workspace_demo",
+    workspaceTabRef: "workspace_tab_demo",
   },
 };
 
-const recordKnowledgeBySnapshotRefRequest = {
-  requestId: "req_4c",
-  method: "recordKnowledge",
-  params: {
-    snapshotRef: "snapshot_demo",
-    guide: "use dashboard",
-    keywords: ["dashboard"],
-  },
-};
-
-test("session rpc contract freezes the HTTP daemon method names and metadata keys", () => {
+test("session rpc contract freezes the workspace-first method names and metadata keys", () => {
   assert.deepEqual(SESSION_RPC_METHODS, [
     "health",
-    "capture",
+    "openWorkspace",
+    "listTabs",
+    "selectTab",
     "navigate",
     "click",
     "type",
     "press",
-    "selectTab",
-    "querySnapshot",
+    "query",
     "recordKnowledge",
     "shutdown",
   ]);
 
   assert.deepEqual(SESSION_RPC_REQUEST_FIELDS, {
     health: [],
-    capture: ["tabRef", "pageId"],
-    navigate: ["tabRef", "url"],
-    click: ["tabRef", "uid"],
-    type: ["tabRef", "uid", "text", "submit", "slowly"],
-    press: ["tabRef", "key"],
-    selectTab: ["tabRef", "pageId"],
-    querySnapshot: ["tabRef", "snapshotRef", "mode", "query", "role", "uid"],
-    recordKnowledge: ["tabRef", "snapshotRef", "page", "guide", "keywords", "rationale", "knowledgeRef"],
+    openWorkspace: [],
+    listTabs: ["workspaceRef"],
+    selectTab: ["workspaceRef", "workspaceTabRef"],
+    navigate: ["workspaceRef", "workspaceTabRef", "url"],
+    click: ["workspaceRef", "workspaceTabRef", "uid"],
+    type: ["workspaceRef", "workspaceTabRef", "uid", "text", "submit", "slowly"],
+    press: ["workspaceRef", "workspaceTabRef", "key"],
+    query: ["workspaceRef", "workspaceTabRef", "mode", "query", "role", "uid"],
+    recordKnowledge: [
+      "workspaceRef",
+      "workspaceTabRef",
+      "guide",
+      "keywords",
+      "rationale",
+    ],
     shutdown: [],
   });
 
@@ -168,60 +159,71 @@ test("session rpc contract freezes the HTTP daemon method names and metadata key
   ]);
 });
 
-test("session rpc requests and results keep the HTTP contract explicit", () => {
+test("session rpc requests and results keep the workspace contract explicit", () => {
+  assert.doesNotThrow(() => assertSessionRpcRequest(openWorkspaceRequest));
+  assert.doesNotThrow(() => assertSessionRpcRequest(listTabsRequest));
+  assert.throws(
+    () =>
+      assertSessionRpcRequest({
+        ...listTabsRequest,
+        params: {
+          tabRef: "tab_demo",
+        },
+      }),
+    /workspaceRef/,
+  );
+
   assert.doesNotThrow(() => assertSessionRpcRequest(navigateRequest));
+  assert.doesNotThrow(() =>
+    assertSessionRpcRequest({
+      ...navigateRequest,
+      params: {
+        ...navigateRequest.params,
+        workspaceTabRef: "workspace_tab_demo",
+      },
+    }),
+  );
   assert.throws(
     () =>
       assertSessionRpcRequest({
         ...navigateRequest,
         params: {
-          tabRef: "tab_demo",
+          workspaceRef: "workspace_demo",
         },
       }),
     /url/,
   );
 
-  assert.doesNotThrow(() => assertSessionRpcRequest(captureRequest));
-  assert.doesNotThrow(() => assertSessionRpcRequest(captureByIndexRequest));
-  assert.doesNotThrow(() => assertSessionRpcRequest(captureEmptyRequest));
-  assert.throws(
-    () =>
-      assertSessionRpcRequest({
-        ...captureRequest,
-        params: {
-          tabRef: "",
-        },
-      }),
-    /tabRef/,
+  assert.doesNotThrow(() => assertSessionRpcRequest(queryRequest));
+  assert.doesNotThrow(() =>
+    assertSessionRpcRequest({
+      ...queryRequest,
+      params: {
+        ...queryRequest.params,
+        workspaceTabRef: "workspace_tab_demo",
+      },
+    }),
   );
   assert.throws(
     () =>
       assertSessionRpcRequest({
-        ...captureByIndexRequest,
+        ...queryRequest,
         params: {
-          pageId: 1.5,
-        },
-      }),
-    /pageId/,
-  );
-
-  assert.throws(
-    () =>
-      assertSessionRpcRequest({
-        requestId: "req_legacy",
-        method: "readKnowledge",
-        params: {},
-      }),
-    /supported session rpc method/,
-  );
-
-  assert.doesNotThrow(() => assertSessionRpcRequest(querySnapshotRequest));
-  assert.throws(
-    () =>
-      assertSessionRpcRequest({
-        ...querySnapshotRequest,
-        params: {
+          workspaceRef: "workspace_demo",
+          mode: "search",
+          query: "Submit",
           snapshotRef: "snapshot_demo",
+        },
+      }),
+    /unknown field snapshotRef|allowed fields/i,
+  );
+  assert.throws(
+    () =>
+      assertSessionRpcRequest({
+        ...queryRequest,
+        params: {
+          workspaceRef: "workspace_demo",
+          workspaceTabRef: "workspace_tab_demo",
           mode: "full",
           query: "Submit",
         },
@@ -231,88 +233,123 @@ test("session rpc requests and results keep the HTTP contract explicit", () => {
   assert.throws(
     () =>
       assertSessionRpcRequest({
-        ...querySnapshotRequest,
+        ...queryRequest,
         params: {
-          snapshotRef: "snapshot_demo",
+          workspaceRef: "workspace_demo",
+          workspaceTabRef: "workspace_tab_demo",
           mode: "search",
         },
       }),
     /search.*query|search.*role|search.*uid/i,
   );
-  assert.throws(
-    () =>
-      assertSessionRpcRequest({
-        ...querySnapshotRequest,
-        params: {
-          snapshotRef: "snapshot_demo",
-          mode: "search",
-          ref: "legacy_ref",
-        },
-      }),
-    /unknown field ref|allowed fields/i,
-  );
+
   assert.doesNotThrow(() => assertSessionRpcRequest(recordKnowledgeRequest));
-  assert.doesNotThrow(() => assertSessionRpcRequest(recordKnowledgeByTabRefRequest));
-  assert.doesNotThrow(() => assertSessionRpcRequest(recordKnowledgeBySnapshotRefRequest));
+  assert.doesNotThrow(() =>
+    assertSessionRpcRequest({
+      ...recordKnowledgeRequest,
+      params: {
+        ...recordKnowledgeRequest.params,
+        workspaceTabRef: "workspace_tab_demo",
+      },
+    }),
+  );
   assert.throws(
     () =>
       assertSessionRpcRequest({
         ...recordKnowledgeRequest,
         params: {
-          ...recordKnowledgeRequest.params,
+          workspaceRef: "workspace_demo",
+          guide: "use dashboard",
           keywords: [],
+          rationale: "The dashboard header confirms the page is ready.",
         },
       }),
-    /keywords/,
+    /keywords/i,
   );
   assert.throws(
     () =>
       assertSessionRpcRequest({
-        ...recordKnowledgeByTabRefRequest,
+        ...recordKnowledgeRequest,
         params: {
+          workspaceRef: "workspace_demo",
+          guide: "use dashboard",
+          keywords: ["dashboard"],
+          rationale: "The dashboard header confirms the page is ready.",
+          page: {
+            origin: "https://example.com",
+            normalizedPath: "/dashboard",
+            title: "Dashboard",
+          },
+        },
+      }),
+    /unknown field page|allowed fields/i,
+  );
+  assert.throws(
+    () =>
+      assertSessionRpcRequest({
+        ...recordKnowledgeRequest,
+        params: {
+          workspaceRef: "workspace_demo",
+          guide: "use dashboard",
+          keywords: ["dashboard"],
+          rationale: "The dashboard header confirms the page is ready.",
+          tabRef: "tab_demo",
+        },
+      }),
+      /unknown field tabRef|allowed fields/i,
+  );
+  assert.throws(
+    () =>
+      assertSessionRpcRequest({
+        ...recordKnowledgeRequest,
+        params: {
+          workspaceRef: "workspace_demo",
           guide: "use dashboard",
           keywords: ["dashboard"],
         },
       }),
-    /recordKnowledge.*page|recordKnowledge.*tabRef|recordKnowledge.*snapshotRef/i,
+    /rationale/i,
   );
 
-  assert.doesNotThrow(() => assertSessionRpcResult(sessionResult));
-  assert.doesNotThrow(() => assertSessionCaptureResult(captureResult));
+  assert.doesNotThrow(() => assertWorkspaceResult(workspaceListResult));
+  assert.doesNotThrow(() => assertWorkspaceTabsResult(workspaceListResult));
+  assert.doesNotThrow(() => assertWorkspaceTabResult(workspaceTabResult));
   assert.throws(
     () =>
-      assertSessionRpcResult({
-        ...sessionResult,
-        snapshotRef: "",
+      assertWorkspaceTabResult({
+        ...workspaceResult,
       }),
-    /snapshotRef/,
+    /workspaceTabRef/i,
   );
   assert.throws(
     () =>
-      assertSessionRpcResult({
-        ...sessionResult,
-        snapshotPath: "/tmp/legacy.md",
+      assertWorkspaceTabsResult({
+        ...workspaceResult,
+        tabs: [
+          {
+            title: "Dashboard",
+            url: "https://example.com/dashboard",
+            active: true,
+          },
+        ],
       }),
-    /snapshotPath/,
+    /workspaceTabRef/i,
   );
   assert.throws(
     () =>
-      assertSessionRpcResult({
-        ...sessionResult,
-        page: {
-          origin: "",
-          normalizedPath: "/dashboard",
-          title: "Dashboard",
-        },
+      assertWorkspaceTabsResult({
+        ...workspaceResult,
+        tabs: [
+          {
+            workspaceTabRef: "workspace_tab_demo",
+            title: "Dashboard",
+            url: "https://example.com/dashboard",
+            active: true,
+            index: 1,
+          },
+        ],
       }),
-    /page\.origin/,
-  );
-  assert.throws(
-    () =>
-      assertSessionCaptureResult({
-        ...sessionResult,
-      }),
-    /tabs/,
+    /index/i,
   );
 
   assert.doesNotThrow(() => assertSessionMetadata(sessionMetadata));
@@ -349,9 +386,17 @@ test("session rpc requests and results keep the HTTP contract explicit", () => {
       }),
     /browserUrl/,
   );
+  assert.throws(
+    () =>
+      assertSessionMetadata({
+        ...sessionMetadata,
+        connectionMode: "autoConnect",
+      }),
+    /connectionMode/,
+  );
 });
 
-test("session client starts the daemon once and follow-up requests reuse the same HTTP session metadata", async () => {
+test("session client starts from cached metadata and reuses the same HTTP session", async () => {
   const harness = await createSessionClientHarness();
 
   try {
@@ -359,7 +404,7 @@ test("session client starts the daemon once and follow-up requests reuse the sam
     const second = await sendSessionRpcRequest("health", {}, harness.options);
     assertSessionMetadata(second);
 
-    assert.equal(harness.launchCount(), 1);
+    assert.equal(harness.launchCount(), 0);
     assert.equal(first.pid, second.pid);
     assert.equal(first.port, second.port);
     assert.equal(first.baseUrl, second.baseUrl);
@@ -368,65 +413,121 @@ test("session client starts the daemon once and follow-up requests reuse the sam
   }
 });
 
-test("session client ensureSessionDaemon discards stale metadata and recreates the daemon session", async () => {
+test("session client sends workspace identity through query params and strips it from JSON bodies", async () => {
   const harness = await createSessionClientHarness();
 
   try {
-    await writeFile(
-      path.join(harness.sessionRoot, "session.json"),
-      `${JSON.stringify({
-        pid: 999999,
-        port: 9222,
-        baseUrl: "http://127.0.0.1:9222",
-        browserUrl: null,
-        connectionMode: "http",
-        startedAt: "2026-03-30T00:00:00.000Z",
-        lastSeenAt: "2026-03-30T00:00:00.000Z",
-        runtimeVersion: "0.0.0-stale",
-      })}\n`,
-      "utf8",
+    const openWorkspace = await sendSessionRpcRequest("openWorkspace", {}, harness.options);
+    const listTabs = await sendSessionRpcRequest(
+      "listTabs",
+      {
+        workspaceRef: "workspace_demo",
+      },
+      harness.options,
+    );
+    const navigate = await sendSessionRpcRequest(
+      "navigate",
+      {
+        workspaceRef: "workspace_demo",
+        url: "https://example.com/dashboard",
+      },
+      harness.options,
+    );
+    const query = await sendSessionRpcRequest(
+      "query",
+      {
+        workspaceRef: "workspace_demo",
+        mode: "search",
+        query: "Submit",
+      },
+      harness.options,
+    );
+    const selectTab = await sendSessionRpcRequest(
+      "selectTab",
+      {
+        workspaceRef: "workspace_demo",
+        workspaceTabRef: "workspace_tab_demo",
+      },
+      harness.options,
+    );
+    const recordKnowledge = await sendSessionRpcRequest(
+      "recordKnowledge",
+      {
+        workspaceRef: "workspace_demo",
+        guide: "use dashboard",
+        keywords: ["dashboard"],
+        rationale: "The dashboard header confirms the page is ready.",
+      },
+      harness.options,
     );
 
-    const metadata = await ensureSessionDaemon(harness.options);
+    assert.doesNotThrow(() => assertWorkspaceTabsResult(openWorkspace));
+    assert.doesNotThrow(() => assertWorkspaceTabsResult(listTabs));
+    assert.equal(openWorkspace.workspaceRef, "workspace_demo");
+    assert.equal(openWorkspace.workspaceTabRef, undefined);
+    assert.equal(listTabs.workspaceRef, "workspace_demo");
+    assert.equal(listTabs.workspaceTabRef, undefined);
+    assert.equal(navigate.workspaceRef, "workspace_demo");
+    assert.equal(navigate.workspaceTabRef, undefined);
+    assert.equal(query.workspaceRef, "workspace_demo");
+    assert.equal(query.workspaceTabRef, undefined);
+    assert.equal(selectTab.workspaceRef, "workspace_demo");
+    assert.equal(selectTab.workspaceTabRef, "workspace_tab_demo");
+    assert.equal(recordKnowledge.workspaceRef, "workspace_demo");
+    assert.equal(recordKnowledge.workspaceTabRef, undefined);
 
-    assert.equal(harness.launchCount(), 1);
-    assert.equal(metadata.runtimeVersion, "0.1.0-test");
-    assert.equal(metadata.pid > 0, true);
-    assert.equal(metadata.port > 0, true);
-    assert.equal(metadata.baseUrl.startsWith("http://"), true);
-  } finally {
-    await harness.cleanup();
-  }
-});
+    const contractRequests = harness.requests
+      .filter((request) => request.path !== "/health")
+      .map((request) => ({
+        method: request.method,
+        path: request.path,
+        body: request.body,
+      }));
 
-test("session client restarts a healthy daemon when the requested runtimeVersion changes", async () => {
-  const harness = await createSessionClientHarness();
-
-  try {
-    const first = await ensureSessionDaemon(harness.options);
-    const second = await ensureSessionDaemon({
-      ...harness.options,
-      runtimeVersion: "0.2.0-test",
-    });
-
-    assert.equal(first.runtimeVersion, "0.1.0-test");
-    assert.equal(second.runtimeVersion, "0.2.0-test");
-    assert.equal(harness.launchCount(), 2);
-  } finally {
-    await harness.cleanup();
-  }
-});
-
-test("session client exposes a narrow HTTP request API for other lanes", async () => {
-  const harness = await createSessionClientHarness();
-
-  try {
-    const health = await sendSessionRpcRequest("health", {}, harness.options);
-
-    assert.equal(health.runtimeVersion, "0.1.0-test");
-    assert.equal(typeof health.port, "number");
-    assert.equal(typeof health.baseUrl, "string");
-    assert.equal("snapshotPath" in health, false);
+    assert.deepEqual(
+      contractRequests,
+      [
+        {
+          method: "POST",
+          path: "/workspaces",
+          body: {},
+        },
+        {
+          method: "GET",
+          path: "/tabs?workspaceRef=workspace_demo",
+          body: null,
+        },
+        {
+          method: "POST",
+          path: "/navigate?workspaceRef=workspace_demo",
+          body: {
+            url: "https://example.com/dashboard",
+          },
+        },
+        {
+          method: "POST",
+          path: "/query?workspaceRef=workspace_demo",
+          body: {
+            mode: "search",
+            query: "Submit",
+          },
+        },
+        {
+          method: "POST",
+          path: "/select-tab?workspaceRef=workspace_demo&workspaceTabRef=workspace_tab_demo",
+          body: {},
+        },
+        {
+          method: "POST",
+          path: "/record-knowledge?workspaceRef=workspace_demo",
+          body: {
+            guide: "use dashboard",
+            keywords: ["dashboard"],
+            rationale: "The dashboard header confirms the page is ready.",
+          },
+        },
+      ],
+    );
   } finally {
     await harness.cleanup();
   }
@@ -436,33 +537,110 @@ async function createSessionClientHarness() {
   const root = await mkdtemp(path.join("/tmp", "browser-session-client-"));
   const sessionRoot = path.join(root, "session");
   await mkdir(sessionRoot, { recursive: true });
+  const requests = [];
   let launches = 0;
-  let daemon = null;
+
+  const server = createServer(async (req, res) => {
+    const body = await readRequestBody(req);
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    requests.push({
+      method: req.method,
+      path: `${url.pathname}${url.search}`,
+      body,
+    });
+
+    if (url.pathname === "/health") {
+      return writeJson(res, 200, {
+        ...sessionMetadataResponse(server.address().port, process.pid),
+        ok: true,
+      });
+    }
+
+    if (url.pathname === "/workspaces") {
+      return writeJson(res, 200, workspaceListResult);
+    }
+
+    if (url.pathname === "/tabs") {
+      return writeJson(res, 200, workspaceListResult);
+    }
+
+    if (url.pathname === "/select-tab") {
+      return writeJson(res, 200, workspaceTabResult);
+    }
+
+    if (url.pathname === "/record-knowledge") {
+      return writeJson(res, 200, workspaceResult);
+    }
+
+    if (url.pathname === "/shutdown") {
+      return writeJson(res, 200, { ok: true });
+    }
+
+    return writeJson(res, 200, workspaceResult);
+  });
+
+  await new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const port = server.address().port;
+  await writeFile(
+    path.join(sessionRoot, "session.json"),
+    `${JSON.stringify(sessionMetadataResponse(port, process.pid), null, 2)}\n`,
+    "utf8",
+  );
 
   const options = {
     env: {},
     sessionRoot,
     runtimeVersion: "0.1.0-test",
     startupTimeoutMs: 2_000,
-    launchDaemon: async (daemonOptions) => {
+    launchDaemon: async () => {
       launches += 1;
-      daemon = await startBrowserSessionDaemon({
-        sessionRoot: daemonOptions.sessionRoot,
-        port: 0,
-        runtimeVersion: daemonOptions.runtimeVersion,
-      });
     },
   };
 
   return {
     options,
     sessionRoot,
+    requests,
     launchCount: () => launches,
     cleanup: async () => {
-      if (daemon) {
-        await daemon.daemon.stop().catch(() => {});
-      }
+      await new Promise((resolve) => server.close(resolve));
       await rm(root, { recursive: true, force: true });
     },
   };
+}
+
+function sessionMetadataResponse(port, pid) {
+  return {
+    pid,
+    port,
+    baseUrl: `http://127.0.0.1:${port}`,
+    browserUrl: `http://127.0.0.1:${port}`,
+    connectionMode: "http",
+    startedAt: "2026-03-30T12:00:00.000Z",
+    lastSeenAt: "2026-03-30T12:01:00.000Z",
+    runtimeVersion: "0.1.0-test",
+  };
+}
+
+async function readRequestBody(req) {
+  let raw = "";
+  for await (const chunk of req) {
+    raw += chunk;
+  }
+
+  if (raw.length === 0) {
+    return null;
+  }
+
+  return JSON.parse(raw);
+}
+
+function writeJson(res, statusCode, body) {
+  const payload = `${JSON.stringify(body)}\n`;
+  res.statusCode = statusCode;
+  res.setHeader("content-type", "application/json; charset=utf-8");
+  res.end(payload);
 }
