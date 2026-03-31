@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -100,4 +102,14 @@ test("mutation result requires explicit base fields and rejects invalid actions"
       action: "click",
     })
   );
+});
+
+test("SKILL front door teaches automatic knowledge hits and keeps read-knowledge out of the normal flow", async () => {
+  const skillPath = path.resolve(process.cwd(), "SKILL.md");
+  const content = await readFile(skillPath, "utf8");
+
+  assert.match(content, /knowledgeHits auto-load/i);
+  assert.match(content, /Do not call `read-knowledge\.js` in the normal browser-task flow\./i);
+  assert.match(content, /must successfully call `record-knowledge\.js` before the final answer/i);
+  assert.doesNotMatch(content, /read-knowledge\.js is for reuse/i);
 });

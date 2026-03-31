@@ -210,7 +210,12 @@ test("query-snapshot resolves the latest bound snapshot from --tab-ref", async (
         normalizedPath: "/chat/inbox/current",
         title: "Inbox",
       },
-      knowledgeHits: [],
+      knowledgeHits: [
+        {
+          guide: "Start from the customer messages list on the left.",
+          keywords: ["Customer messages", "list"],
+        },
+      ],
       summary: "resolved from the session",
       matches: [
         {
@@ -241,6 +246,8 @@ test("query-snapshot resolves the latest bound snapshot from --tab-ref", async (
     assertSearchResult(result);
     assert.equal(result.matches.length, 1);
     assert.equal(result.matches[0]?.uid, "1_1");
+    assert.equal(result.knowledgeHits.length, 1);
+    assert.equal(result.knowledgeHits[0]?.guide, "Start from the customer messages list on the left.");
     assert.equal("snapshotText" in result, false);
     assert.equal("snapshotPath" in result, false);
   } finally {

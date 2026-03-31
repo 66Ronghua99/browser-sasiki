@@ -89,6 +89,8 @@ node dist/scripts/query-snapshot.js --tab-ref main --mode auto
 node dist/scripts/navigate.js --tab-ref main --url https://example.com
 ```
 
+`knowledgeHits` are the normal reusable-knowledge surface. They auto-load from page identity during `capture`, mutation actions, and daemon-backed `query-snapshot`, so ordinary agent runs should consume those returned hits directly instead of calling a separate read step.
+
 Use `query-snapshot.js --mode full` only when you explicitly need the full current snapshot, such as cold start inspection or debugging.
 
 Before you give the final answer for a browser task, record one durable cue when either of these happened during execution:
@@ -112,10 +114,11 @@ The main command groups are:
   - `node dist/scripts/click.js --tab-ref <tabRef> --uid <element-uid>`
   - `node dist/scripts/type.js --tab-ref <tabRef> --uid <element-uid> --text <value>`
   - `node dist/scripts/press.js --tab-ref <tabRef> --key <key-name>`
-- retrieval and knowledge
+- retrieval and durable write
   - `node dist/scripts/query-snapshot.js --tab-ref <tabRef> --mode <search|auto|full> [--query <text>] [--role <role>] [--uid <uid>]`
-  - `node dist/scripts/read-knowledge.js --origin <origin> --normalized-path <path>`
   - `node dist/scripts/record-knowledge.js --tab-ref <tabRef> --guide <text> --keywords <comma-separated>`
+
+`read-knowledge.js` remains available only for manual inspection or debugging. It is not part of the normal agent workflow because page-matched reusable guidance should already arrive in `knowledgeHits`.
 
 ## Argument Glossary
 
@@ -214,17 +217,6 @@ node dist/scripts/query-snapshot.js --tab-ref main --mode search --role button
 node dist/scripts/query-snapshot.js --snapshot-ref snapshot_demo --mode full
 ```
 
-- `read-knowledge.js`
-  - daemon path: use `--knowledge-ref`, or a runtime/page hint such as `--tab-ref`, `--snapshot-ref`, or `--origin` plus `--normalized-path`
-  - standalone compatibility: `--knowledge-file` only when intentionally reading a file without runtime state
-  - purpose: read durable page knowledge
-  - example:
-
-```bash
-node dist/scripts/read-knowledge.js --tab-ref main
-node dist/scripts/read-knowledge.js --origin https://example.com --normalized-path /checkout
-```
-
 - `record-knowledge.js`
   - required: `--guide`, `--keywords`, plus either `--tab-ref`, `--snapshot-ref`, or `--origin` + `--normalized-path`
   - optional: `--tab-ref`, `--snapshot-ref`, `--knowledge-ref`, `--rationale`
@@ -239,6 +231,20 @@ node dist/scripts/record-knowledge.js \
   --keywords "checkout,promo,summary"
 ```
 
+## Manual Knowledge Inspection
+
+`read-knowledge.js` is for explicit manual inspection or debugging, not for the normal browser-task loop.
+
+- daemon path: `--knowledge-ref`, `--tab-ref`, `--snapshot-ref`, or `--origin` plus `--normalized-path`
+- standalone compatibility: `--knowledge-file` only when you intentionally want to inspect a file without runtime state
+
+Example:
+
+```bash
+node dist/scripts/read-knowledge.js --tab-ref main
+node dist/scripts/read-knowledge.js --origin https://example.com --normalized-path /checkout
+```
+
 ## Invocation Notes
 
 - Use one `--tab-ref` consistently for one browser task context.
@@ -246,6 +252,8 @@ node dist/scripts/record-knowledge.js \
 - First capture now creates a new workspace tab by default, so it should not hijack the user's current active tab unless you explicitly pass `--page-id`.
 - Normal CLI calls reuse one healthy `browser-sessiond`, and the next request should automatically replace an older daemon when the installed runtime changes.
 - `tabRef` bindings are durable workspace pointers, not magic live handles. If the bound Chrome tab is manually closed, re-run `capture` or `select-tab` to rebind that workspace.
+- `knowledgeHits` are the normal reusable-knowledge input for a run; do not add a separate `read-knowledge` step unless you are explicitly inspecting or debugging.
+- If `query-snapshot --mode full` was needed, or a query/action exposed a stable reusable cue, the run should end with a successful `record-knowledge` write before the final answer.
 - Treat returned `tabRef` and `snapshotRef` as the main runtime contract. Normal agent flows should not depend on runtime file paths.
 - Normal CLI command output intentionally omits runtime file paths. Even if you know the temp files exist, use `tabRef` / `snapshotRef` and the CLI front door instead of directly reading runtime files during normal agent execution.
 - `query-snapshot.js --mode search` should include at least one selector such as `--query`, `--role`, or `--uid`.
