@@ -367,6 +367,205 @@ test("browser-sessiond query full only returns workspace-local open tabs in the 
   }
 });
 
+test("browser-sessiond keeps workspaceTabRef preselect + action atomic in one transaction", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const requestCalls = [];
+  const workspaceRef = "workspace_tab_ref_test";
+  const detailsTabRef = "workspace_tab_2";
+  let clickInProgress = false;
+  let releaseClick;
+  const clickGate = new Promise((resolve) => {
+    releaseClick = resolve;
+  });
+  let releaseQuery;
+  const queryGate = new Promise((resolve) => {
+    releaseQuery = resolve;
+  });
+  let clickStarted;
+  const waitForClickStart = new Promise((resolve) => {
+    clickStarted = resolve;
+  });
+  let queryStarted;
+  const waitForQueryStart = new Promise((resolve) => {
+    queryStarted = resolve;
+  });
+  let selectTabStarted;
+  const waitForSelectTabStart = new Promise((resolve) => {
+    selectTabStarted = resolve;
+  });
+  const { daemon, metadata } = await startBrowserSessionDaemon({
+    sessionRoot: path.join(root, "session"),
+    port: 0,
+    runtimeVersion: "test-http",
+    runtimeRoots: createIsolatedRuntimeRoots(root),
+    createBrowserBridge: async () => createFakeBrowserBridge(),
+  });
+
+  daemon.resolveWorkspaceTabPageId = () => 2;
+
+  let queryRequestPromise;
+  const startQueryRequest = () => {
+    if (queryRequestPromise) {
+      return queryRequestPromise;
+    }
+
+    queryRequestPromise = fetch(`${metadata.baseUrl}/query?workspaceRef=${workspaceRef}`, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ mode: "full" }),
+    }).then(async (response) => ({
+      status: response.status,
+      body: response.ok ? await response.json() : await response.text(),
+    }));
+
+    return queryRequestPromise;
+  };
+
+  daemon.browserAction = async (action, toolName, toolArgs, actionWorkspaceRef) => {
+    const detailsPage = {
+      origin: "https://example.com",
+      normalizedPath: "/details",
+      title: "Details",
+    };
+
+    if (action === "select-tab") {
+      requestCalls.push("select-tab:start");
+      selectTabStarted();
+      startQueryRequest();
+      await Promise.race([
+        waitForQueryStart,
+        new Promise((resolve) => {
+          setTimeout(resolve, 20);
+        }),
+      ]);
+      requestCalls.push("select-tab:end");
+      return {
+        ok: true,
+        workspaceRef: actionWorkspaceRef,
+        workspaceTabRef: `workspace_tab_${toolArgs.pageId}`,
+        page: detailsPage,
+        tabs: [
+          {
+            workspaceTabRef: `workspace_tab_${toolArgs.pageId}`,
+            title: "Details",
+            url: "https://example.com/details",
+            active: true,
+          },
+        ],
+        knowledgeHits: [],
+        summary: "selected tab",
+      };
+    }
+
+    if (action === "click") {
+      requestCalls.push("click:start");
+      clickInProgress = true;
+      clickStarted();
+      startQueryRequest();
+      await clickGate;
+      clickInProgress = false;
+      requestCalls.push("click:end");
+      return {
+        ok: true,
+        workspaceRef: actionWorkspaceRef,
+        workspaceTabRef: detailsTabRef,
+        page: detailsPage,
+        tabs: [
+          {
+            workspaceTabRef: detailsTabRef,
+            title: "Details",
+            url: "https://example.com/details",
+            active: true,
+          },
+        ],
+        toolName,
+        knowledgeHits: [],
+        summary: "clicked",
+      };
+    }
+
+    throw new Error(`unexpected browser action ${action}`);
+  };
+
+  daemon.queryWorkspace = async (params) => {
+    queryStarted();
+    if (clickInProgress) {
+      requestCalls.push("queryWorkspace:interleaving");
+    }
+    requestCalls.push("queryWorkspace:start");
+    await queryGate;
+    requestCalls.push("queryWorkspace:end");
+    return {
+      ok: true,
+      workspaceRef: params.workspaceRef,
+      snapshotText: "uid=root RootWebArea \"Workspace\" url=\"https://example.com/dashboard\"",
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/dashboard",
+        title: "Workspace",
+      },
+      knowledgeHits: [],
+      summary: "queried workspace",
+    };
+  };
+
+  try {
+    const clickRequest = fetch(
+      `${metadata.baseUrl}/click?workspaceRef=${workspaceRef}&workspaceTabRef=${detailsTabRef}`,
+      {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ uid: "submit_button" }),
+      },
+    ).then(async (response) => ({
+      status: response.status,
+      body: response.ok ? await response.json() : await response.text(),
+    }));
+
+    await Promise.race([
+      waitForSelectTabStart,
+      waitForClickStart,
+    ]);
+
+    if (!queryRequestPromise) {
+      startQueryRequest();
+    }
+
+    await Promise.race([
+      waitForClickStart,
+      waitForQueryStart,
+    ]);
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 20);
+    });
+
+    releaseClick();
+    releaseQuery();
+
+    const [clickWithTabRef, query] = await Promise.all([clickRequest, startQueryRequest()]);
+
+    assert.equal(clickWithTabRef.status, 200);
+    assert.equal(query.status, 200);
+    if (typeof clickWithTabRef.body === "object" && clickWithTabRef.body !== null) {
+      assert.equal(clickWithTabRef.body.workspaceRef, workspaceRef);
+      assert.equal(clickWithTabRef.body.workspaceTabRef, detailsTabRef);
+    }
+    assert.equal(typeof query.body === "object" ? query.body.workspaceRef : workspaceRef, workspaceRef);
+    assert.equal(requestCalls.includes("queryWorkspace:interleaving"), false);
+    assert.equal(requestCalls.indexOf("queryWorkspace:start") > requestCalls.indexOf("click:end"), true);
+  } finally {
+    await daemon.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("browser-sessiond click adopts a newly focused tab into the workspace and returns the live active tab to the agent", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
   const bridge = createPopupOpeningBrowserBridge();

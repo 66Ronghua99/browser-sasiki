@@ -41,12 +41,75 @@ function createDirectOpenWorkspaceBridge() {
   return {
     listPages: async () => "## Pages\n- 1 [Workspace](chrome://newtab/)",
     newPage: async () => "## Pages\n- 1 [Workspace](chrome://newtab/)",
+    listLivePageInventory: async () => [
+      {
+        pageId: 1,
+        targetId: "target-workspace",
+        openerId: "",
+        url: "chrome://newtab/",
+        title: "Workspace",
+      },
+    ],
     openWorkspaceTab: async () => ({
       pageId: 1,
       pageListText: "## Pages\n- 1 [Workspace](chrome://newtab/)",
     }),
     captureSnapshot: async () => "uid=root RootWebArea \"Workspace\" url=\"chrome://newtab/\"",
+    captureSnapshotForPage: async () => "uid=root RootWebArea \"Workspace\" url=\"chrome://newtab/\"",
     callTool: async () => ({ content: [{ type: "text", text: "ok" }] }),
+    close: async () => {},
+  };
+}
+
+function createBlockingBrowserBridge() {
+  const events = [];
+  let releaseGate;
+  const gate = new Promise((resolve) => {
+    releaseGate = resolve;
+  });
+  let startFirstCall;
+  const started = new Promise((resolve) => {
+    startFirstCall = resolve;
+  });
+  let firstClickInProgress = false;
+
+  return {
+    events,
+    async waitForFirstToolCall() {
+      return started;
+    },
+    releaseFirstToolCall() {
+      releaseGate();
+    },
+    listPages: async () => "## Pages\n- 1 (current) [Workspace](chrome://newtab/)",
+    newPage: async () => "## Pages\n- 1 (current) [Workspace](chrome://newtab/)",
+    openWorkspaceTab: async () => ({
+      pageId: 1,
+      pageListText: "## Pages\n- 1 (current) [Workspace](chrome://newtab/)",
+    }),
+    captureSnapshot: async () => "uid=root RootWebArea \"Workspace\" url=\"chrome://newtab/\"",
+    captureSnapshotForPage: async () => "uid=root RootWebArea \"Workspace\" url=\"chrome://newtab/\"",
+    listLivePageInventory: async () => [
+      {
+        pageId: 1,
+        targetId: "target-workspace",
+        openerId: "",
+        url: "chrome://newtab/",
+        title: "Workspace",
+      },
+    ],
+    async callTool(name) {
+      if (name === "click" && !firstClickInProgress) {
+        firstClickInProgress = true;
+        events.push("click:start");
+        startFirstCall?.();
+        await gate;
+        events.push("click:end");
+        return { content: [{ type: "text", text: "ok" }] };
+      }
+
+      return { content: [{ type: "text", text: `${name} complete` }] };
+    },
     close: async () => {},
   };
 }
@@ -173,6 +236,96 @@ test("browser-sessiond opens a workspace from a bridge-provided pageId even when
     assert.equal(Array.isArray(workspace.tabs), true);
     assert.equal(workspace.tabs[0]?.active, true);
     assert.equal(workspace.tabs[0]?.title, "Workspace");
+  } finally {
+    await daemon.stop().catch(() => {});
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("browser-sessiond serializes overlapping workspace-scoped daemon requests", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  let clickInProgress = false;
+  let clickGateResolve;
+  const clickGate = new Promise((resolve) => {
+    clickGateResolve = resolve;
+  });
+  let clickStarted;
+  const waitForClickStart = new Promise((resolve) => {
+    clickStarted = resolve;
+  });
+
+  const daemon = new BrowserSessionDaemon({
+    sessionRoot: path.join(root, "session"),
+    port: 0,
+    runtimeVersion: "test-http",
+    createBrowserBridge: async () => createStubBrowserBridge(),
+  });
+  daemon.touch = async () => {};
+
+  const requestCalls = [];
+
+  daemon.browserAction = async (action) => {
+    requestCalls.push(`${action}:start`);
+    if (action === "click") {
+      clickStarted?.();
+      clickInProgress = true;
+      await clickGate;
+      clickInProgress = false;
+    }
+    requestCalls.push(`${action}:end`);
+
+    return {
+      ok: true,
+      workspaceRef: "workspace-det",
+    };
+  };
+
+  daemon.queryWorkspace = async () => {
+    if (clickInProgress) {
+      requestCalls.push("queryWorkspace:interleaving");
+    }
+    requestCalls.push("queryWorkspace:start");
+    requestCalls.push("queryWorkspace:end");
+
+    return {
+      ok: true,
+      workspaceRef: "workspace-det",
+      mode: "full",
+    };
+  };
+
+  try {
+    await daemon.start();
+
+    const clickRequest = daemon.handleHttpRequest("click", {
+      workspaceRef: "workspace-det",
+      uid: "submit_button",
+    });
+
+    await waitForClickStart;
+
+    const queryRequest = daemon.handleHttpRequest("queryWorkspace", {
+      workspaceRef: "workspace-det",
+      mode: "full",
+    });
+
+    await Promise.resolve();
+
+    clickGateResolve();
+
+    const [clickResult, queryResult] = await Promise.all([clickRequest, queryRequest]);
+
+    assert.equal(clickResult.ok, true);
+    assert.equal(queryResult.ok, true);
+    assert.equal(clickResult.workspaceRef, "workspace-det");
+    assert.equal(queryResult.workspaceRef, "workspace-det");
+    assert.equal(requestCalls.includes("queryWorkspace:interleaving"), false);
+    assert.deepEqual(requestCalls, [
+      "click:start",
+      "click:end",
+      "queryWorkspace:start",
+      "queryWorkspace:end",
+    ]);
   } finally {
     await daemon.stop().catch(() => {});
     await rm(root, { recursive: true, force: true });
