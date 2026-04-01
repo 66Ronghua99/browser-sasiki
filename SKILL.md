@@ -30,7 +30,7 @@ If you need to read health explicitly after that, use:
 ## Regular workflow
 
 - Use `POST /workspaces` when you need a fresh workspace entry for a task.
-- Use `GET /tabs` when you need the current tab inventory for a workspace.
+- Use `GET /tabs` when you need the current open-tab inventory for a workspace.
 - Use `POST /select-tab` when you know the workspace tab you want to work in.
 - Use `POST /navigate`, `POST /click`, `POST /type`, `POST /press`, and `POST /query` when you already know the next browser action.
 - Use `POST /query` with `search` mode first if you have a potential target in mind but don't know where it is; use `full` mode only if you need to inspect the page structure or recover context.
@@ -126,7 +126,14 @@ curl -s -X POST "$BASE_URL/record-knowledge?workspaceRef=workspace_demo" \
 Use exactly one workspace scope:
 
 - `workspaceRef`: live workspace query. The daemon works against the current browser state for that workspace.
-- `workspaceTabRef`: explicit tab selection within a workspace. The daemon resolves that tab before running the action.
+- `workspaceTabRef`: explicit tab selection within a workspace. This is the durable logical tab handle exposed to agents.
+
+The runtime keeps a stricter internal contract:
+
+- each `workspaceTabRef` is bound to a live Chrome `targetId`
+- browser `pageId` or tab index is request-local only and may drift when tabs open, close, or reorder
+- workspace-scoped requests are serialized in the daemon and refresh live tab truth before and after execution
+- `/tabs` and rewritten `### Open tabs` envelopes only expose currently open workspace tabs
 
 ### Query Snapshots
 

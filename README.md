@@ -17,6 +17,8 @@ This README is shared by the Sasiki `skill/` directory, which remains the source
 - Persistent session: one daemon keeps the Chrome attachment and workspace state alive across multiple actions.
 - Workspace-first model: agents can work with tabs and pages without rebuilding context on every command.
 - Live page querying: results come from the current page state instead of a stale exported snapshot.
+- Stable tab identity: agents target `workspaceTabRef`, while the runtime binds that logical tab to a live Chrome `targetId`.
+- Serialized workspace requests: workspace-scoped HTTP requests run one at a time inside the daemon and sync live tab state before and after execution.
 - Simple integration: the action surface is plain HTTP plus JSON, so it is easy to call from Codex, Claude Code, or custom tooling.
 - Reusable knowledge: stable page cues can be stored once and reused in later tasks.
 
@@ -48,9 +50,6 @@ npm install
 
 Restart Codex after installation so the new skill is loaded.
 
-If you are reading this file from the main Sasiki source repo instead of the standalone mirror, run `cd skill` first so the commands below still execute from the skill root.
-
-To verify the install before attaching to Chrome, run `npm test`.
 
 ## Usage
 
@@ -84,7 +83,7 @@ curl -s -X POST "$BASE_URL/workspaces" \
 curl -s "$BASE_URL/tabs?workspaceRef=workspace_demo"
 ```
 
-Use the returned `workspaceTabRef` when you need to target or preselect a specific workspace tab via `POST /select-tab` or any workspace-scoped action.
+Use the returned `workspaceTabRef` when you need to target or preselect a specific workspace tab via `POST /select-tab` or any workspace-scoped action. The response lists currently open workspace tabs only; closed tabs stay in internal state for reconciliation but are not exposed in public tab inventories.
 
 ### Query the current page
 
@@ -120,11 +119,11 @@ curl -s -X POST "$BASE_URL/click?workspaceRef=workspace_demo" \
   -d '{"uid":"uid_demo"}'
 ```
 
-Type into the active element:
+Type into a specific element by `uid`:
 
 ```bash
 curl -s -X POST "$BASE_URL/type?workspaceRef=workspace_demo" \
-  -d '{"text":"hello"}'
+  -d '{"uid":"uid_demo","text":"hello"}'
 ```
 
 ### Available endpoints

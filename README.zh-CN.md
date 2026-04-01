@@ -108,11 +108,11 @@ curl -s -X POST "$BASE_URL/click?workspaceRef=workspace_demo" \
   -d '{"uid":"uid_demo"}'
 ```
 
-在当前激活元素中输入文本：
+通过 `uid` 向指定元素输入文本：
 
 ```bash
 curl -s -X POST "$BASE_URL/type?workspaceRef=workspace_demo" \
-  -d '{"text":"hello"}'
+  -d '{"uid":"uid_demo","text":"hello"}'
 ```
 
 ### 可用 endpoint
@@ -128,6 +128,14 @@ curl -s -X POST "$BASE_URL/type?workspaceRef=workspace_demo" \
 - `POST /query`
 - `POST /record-knowledge`
 - `POST /shutdown`
+
+## Workspace 与 Tab 不变量
+
+- `workspaceTabRef` 是暴露给 agent 的稳定逻辑 tab 句柄。
+- runtime 会把每个 workspace tab 绑定到一个 live Chrome `targetId`；`pageId` 或 tab index 只在单次请求里临时使用。
+- `/workspaces`、`/tabs`、`/click`、`/query`、`/record-knowledge` 这类 workspace-scoped 请求都会在 daemon 内串行执行。
+- 每次 workspace-scoped 请求都会在执行前后同步 live browser tab 真相，所以新 tab、关闭 tab、active tab 变化都会被回写到 workspace state。
+- `/tabs` 返回值以及 `query(mode=full)` 里重写后的 `Open tabs` 段落只暴露当前仍然 open 的 workspace tabs。
 
 ## MIT 协议
 

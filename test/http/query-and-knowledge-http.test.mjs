@@ -133,9 +133,6 @@ test("HTTP request bodies keep workspace identity in query params instead of JSO
 test("HTTP route handler rejects unsupported query parameters", async () => {
   const calls = [];
   const routeHandler = createHttpRouteHandler({
-    resolveWorkspaceTabPageId: () => {
-      throw new Error("resolveWorkspaceTabPageId should not be reached");
-    },
     handleHttpRequest: async (endpoint, body) => {
       calls.push({ endpoint, body });
       return {
@@ -211,31 +208,11 @@ test("HTTP route handler parses workspace identity from query params before invo
   assert.equal(body.snapshotPath, undefined);
 });
 
-test("HTTP route handler preselects explicit workspace tab targets before workspace-scoped actions", async () => {
+test("HTTP route handler keeps explicit workspaceTabRef inside one workspace-scoped daemon request", async () => {
   const calls = [];
   const routeHandler = createHttpRouteHandler({
-    resolveWorkspaceTabPageId: (workspaceRef, workspaceTabRef) => {
-      assert.equal(workspaceRef, "workspace_demo");
-      assert.equal(workspaceTabRef, "workspace_tab_opaque");
-      return 2;
-    },
     handleHttpRequest: async (endpoint, body) => {
       calls.push({ endpoint, body });
-      if (endpoint === "selectTab") {
-        return {
-          ok: true,
-          workspaceRef: body.workspaceRef,
-          workspaceTabRef: `workspace_tab_${body.pageId}`,
-          page: {
-            origin: "https://example.com",
-            normalizedPath: "/dashboard",
-            title: "Dashboard",
-          },
-          knowledgeHits: [],
-          summary: "preselected",
-        };
-      }
-
       if (endpoint === "queryWorkspace") {
         return {
           ok: true,
@@ -315,45 +292,27 @@ test("HTTP route handler preselects explicit workspace tab targets before worksp
 
   assert.deepEqual(calls, [
     {
-      endpoint: "selectTab",
-      body: {
-        workspaceRef: "workspace_demo",
-        pageId: 2,
-      },
-    },
-    {
       endpoint: "navigate",
       body: {
         workspaceRef: "workspace_demo",
+        workspaceTabRef: "workspace_tab_opaque",
         url: "https://example.com/dashboard",
-      },
-    },
-    {
-      endpoint: "selectTab",
-      body: {
-        workspaceRef: "workspace_demo",
-        pageId: 2,
       },
     },
     {
       endpoint: "queryWorkspace",
       body: {
         workspaceRef: "workspace_demo",
+        workspaceTabRef: "workspace_tab_opaque",
         mode: "search",
         query: "Submit",
-      },
-    },
-    {
-      endpoint: "selectTab",
-      body: {
-        workspaceRef: "workspace_demo",
-        pageId: 2,
       },
     },
     {
       endpoint: "recordKnowledge",
       body: {
         workspaceRef: "workspace_demo",
+        workspaceTabRef: "workspace_tab_opaque",
         guide: "Check the dashboard header first.",
         keywords: ["dashboard"],
         rationale: "The dashboard heading confirms the page is loaded.",
@@ -419,12 +378,15 @@ test("HTTP route handler bridges workspace-first workspace listing endpoints ont
   assert.deepEqual(calls, [
     {
       endpoint: "openWorkspace",
-      body: {},
+      body: {
+        createWorkspaceIfMissing: true,
+      },
     },
     {
       endpoint: "openWorkspace",
       body: {
         workspaceRef,
+        createWorkspaceIfMissing: false,
       },
     },
   ]);

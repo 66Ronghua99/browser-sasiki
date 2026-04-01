@@ -220,7 +220,7 @@ test("front-door docs teach the workspace-first direct-DevTools surface and excl
   assert.doesNotMatch(readmeContent, /node skill\/scripts\/ensure-browser-session\.mjs/i);
   assert.match(readmeContent, /npm test/i);
   assert.doesNotMatch(readmeContent, /npm --prefix skill test/i);
-  assert.match(readmeContent, /publish mirror|source of truth|single source of truth/i);
+  assert.match(readmeContent, /GitHub repository|GitHub repo|本地手动安装/i);
 });
 
 test("front-door docs keep curl JSON examples minimal and do not require an explicit content-type header", async () => {
@@ -237,4 +237,31 @@ test("front-door docs keep curl JSON examples minimal and do not require an expl
     assert.doesNotMatch(content, /-H\s+['"]content-type:\s*application\/json['"]/i);
     assert.match(content, /curl\s+-s\s+-X\s+POST[\s\S]*-d\s+'?\{/i);
   }
+});
+
+test("front-door docs keep local development in Sasiki skill instead of a separate browser-sasiki checkout", async () => {
+  const rootReadmePath = fileURLToPath(new URL("../../../README.md", import.meta.url));
+  const skillReadmePath = fileURLToPath(new URL("../../README.md", import.meta.url));
+  const skillReadmeZhPath = fileURLToPath(new URL("../../README.zh-CN.md", import.meta.url));
+  const currentStatePath = fileURLToPath(new URL("../../../docs/project/current-state.md", import.meta.url));
+  const [rootReadme, skillReadme, skillReadmeZh, currentState] = await Promise.all([
+    readFile(rootReadmePath, "utf8"),
+    readFile(skillReadmePath, "utf8"),
+    readFile(skillReadmeZhPath, "utf8"),
+    readFile(currentStatePath, "utf8"),
+  ]);
+
+  assert.match(rootReadme, /node scripts\/publish/);
+  assert.doesNotMatch(rootReadme, /\/Users\/cory\/codes\/browser-sasiki/);
+  assert.match(rootReadme, /66Ronghua99\/browser-sasiki/);
+
+  assert.match(skillReadme, /git clone https:\/\/github\.com\/66Ronghua99\/browser-sasiki\.git/i);
+  assert.match(skillReadmeZh, /git clone https:\/\/github\.com\/66Ronghua99\/browser-sasiki\.git/i);
+  assert.match(skillReadme, /do not keep a second local .* checkout for development/i);
+  assert.match(skillReadmeZh, /不要再单独维护一份本地 `browser-sasiki` checkout 作为开发目录/);
+  assert.match(currentState, /66Ronghua99\/browser-sasiki/);
+  assert.match(currentState, /local development/i);
+
+  assert.doesNotMatch(currentState, /\/Users\/cory\/codes\/browser-sasiki/);
+  assert.doesNotMatch(currentState, /cd \/Users\/cory\/codes\/browser-sasiki/i);
 });
