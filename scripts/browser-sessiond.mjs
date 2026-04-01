@@ -296,7 +296,21 @@ export class BrowserSessionDaemon {
     return {
       listPages: async () => (await this.ensureBrowserBridge()).listPages(),
       captureSnapshot: async () => (await this.ensureBrowserBridge()).captureSnapshot(),
+      captureSnapshotForPage: async (pageId) => {
+        const bridge = await this.ensureBrowserBridge();
+        if (typeof bridge.captureSnapshotForPage !== "function") {
+          throw new Error("browser bridge cannot capture a snapshot for an explicit pageId");
+        }
+        return bridge.captureSnapshotForPage(pageId);
+      },
       callBrowserTool: async (name, args) => (await this.ensureBrowserBridge()).callTool(name, args),
+      listLivePageInventory: async () => {
+        const bridge = await this.ensureBrowserBridge();
+        if (typeof bridge.listLivePageInventory !== "function") {
+          throw new Error("browser bridge cannot list live page inventory with targetId records");
+        }
+        return bridge.listLivePageInventory();
+      },
       readActiveTabIndex: async () => {
         const pageListText = await (await this.ensureBrowserBridge()).listPages();
         const activeTab = parseTabInventory(pageListText).find((tab) => tab.active);
@@ -515,6 +529,7 @@ export class BrowserSessionDaemon {
       onDisconnect: connected.onDisconnect,
       close: connected.close,
       listPages: async () => connected.client.listPages(),
+      listLivePageInventory: async () => connected.client.listLivePageInventory(),
       openWorkspaceTab: async (url) => {
         const page = await connected.client.openWorkspaceTab(url ?? DEFAULT_WORKSPACE_TAB_URL, {
           bringToFront: true,
@@ -526,6 +541,7 @@ export class BrowserSessionDaemon {
       },
       newPage: async (url, background) => connected.client.newPage(url, background),
       captureSnapshot: async () => runtime.captureSnapshot(),
+      captureSnapshotForPage: async (pageId) => connected.client.captureSnapshotForPage(pageId),
       callTool: async (name, args) => runtime.callBrowserTool(name, args),
     };
     this.attachBrowserBridgeDisconnectHandler(this.browserBridge);

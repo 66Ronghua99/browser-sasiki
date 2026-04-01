@@ -103,7 +103,9 @@ function assertWorkspaceTabRecord(record) {
   assertRecord(record, "workspace tab record");
   assertNonEmptyString(record.workspaceRef, "workspaceRef");
   assertNonEmptyString(record.workspaceTabRef, "workspaceTabRef");
-  assertNonNegativeInteger(record.browserTabIndex, "browserTabIndex");
+  assertNonEmptyString(record.targetId, "targetId");
+  assertOptionalNonNegativeInteger(record.browserTabIndex, "browserTabIndex");
+  assertTabStatus(record.status);
   assertPageIdentity(record.page);
   assertNonEmptyString(record.snapshotPath, "snapshotPath");
   assertNonEmptyString(record.createdAt, "createdAt");
@@ -132,6 +134,19 @@ function assertNonEmptyString(value, label) {
 function assertNonNegativeInteger(value, label) {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     throw new TypeError(`${label} must be a non-negative integer`);
+  }
+}
+
+function assertOptionalNonNegativeInteger(value, label) {
+  if (value === undefined) {
+    return;
+  }
+  assertNonNegativeInteger(value, label);
+}
+
+function assertTabStatus(value) {
+  if (value !== "open" && value !== "closed") {
+    throw new TypeError('status must be "open" or "closed"');
   }
 }
 

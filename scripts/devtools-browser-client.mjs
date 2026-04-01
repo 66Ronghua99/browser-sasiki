@@ -18,10 +18,7 @@ export class DevtoolsBrowserClient {
 
   async captureSnapshot() {
     const page = await this.resolvePage({ allowFirstPageFallback: true });
-    const pageId = this.findPageId(page);
-    const snapshot = await this.captureAccessibilitySnapshot(page, pageId);
-    this.snapshotHandlesByPage.set(pageId, snapshot.handles);
-    return snapshot.snapshotText;
+    return this.captureSnapshotForPage(this.findPageId(page));
   }
 
   async listPages() {
@@ -37,6 +34,31 @@ export class DevtoolsBrowserClient {
         title: await readPageTitle(page),
       })),
     );
+  }
+
+  async listLivePageInventory() {
+    const pages = this.listContextPages();
+    return Promise.all(
+      pages.map(async (page, pageId) => {
+        const pageInfo = await this.readPageTargetInfo(page);
+        const title = await readPageTitle(page);
+        const url = readPageUrl(page);
+        return {
+          pageId,
+          targetId: pageInfo.targetId,
+          openerId: pageInfo.openerId,
+          url,
+          title,
+        };
+      }),
+    );
+  }
+
+  async captureSnapshotForPage(pageId) {
+    const page = await this.resolvePage({ pageId });
+    const snapshot = await this.captureAccessibilitySnapshot(page, pageId);
+    this.snapshotHandlesByPage.set(pageId, snapshot.handles);
+    return snapshot.snapshotText;
   }
 
   async listLiveTargets() {
@@ -71,8 +93,11 @@ export class DevtoolsBrowserClient {
       await page.bringToFront?.();
     }
 
+    const targetInfo = await this.readPageTargetInfo(page);
+
     return {
       pageId,
+      targetId: targetInfo.targetId,
       url: readPageUrl(page),
       title: await readPageTitle(page),
     };
@@ -340,6 +365,13 @@ export class DevtoolsBrowserClient {
       await session.detach?.();
     }
   }
+
+  async readPageTargetInfo(page) {
+    return this.withPageSession(page, async (session) => {
+      const result = await session.send("Target.getTargetInfo");
+      return sanitizeTargetInfo(result?.targetInfo);
+    });
+  }
 }
 
 export async function createConnectedDevtoolsBrowserClient(options = {}, dependencies = {}) {
@@ -444,6 +476,7 @@ function formatPageInventory(pages) {
 function sanitizeTargetInfo(targetInfo) {
   return {
     targetId: typeof targetInfo?.targetId === "string" ? targetInfo.targetId : "",
+    openerId: typeof targetInfo?.openerId === "string" ? targetInfo.openerId : "",
     type: typeof targetInfo?.type === "string" ? targetInfo.type : "",
     title: typeof targetInfo?.title === "string" ? targetInfo.title : "",
     url: typeof targetInfo?.url === "string" ? targetInfo.url : "",

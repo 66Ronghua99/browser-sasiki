@@ -16,6 +16,15 @@ test("openWorkspaceFlow reconciles live browser state into the cached workspace 
       pageId: 7,
       pageListText: "## Pages\n7: https://example.com/workspace [selected]",
     }),
+    listLivePageInventory: async () => [
+      {
+        pageId: 7,
+        targetId: "target-workspace",
+        openerId: "",
+        url: "https://example.com/workspace",
+        title: "Workspace",
+      },
+    ],
     callBrowserTool: async (name, args) => {
       harness.browserCalls.push({ name, args });
       if (name === "select_page") {
@@ -30,7 +39,7 @@ test("openWorkspaceFlow reconciles live browser state into the cached workspace 
         ],
       };
     },
-    captureSnapshot: async () =>
+    captureSnapshotForPage: async () =>
       "## Latest page snapshot\nuid=7_0 RootWebArea \"Workspace\" url=\"https://example.com/workspace\"",
     readActiveTabIndex: async () => {
       throw new Error("readActiveTabIndex should not be used for a workspace open flow");
@@ -92,6 +101,15 @@ test("openWorkspaceFlow creates a new workspace tab for a first-time workspaceRe
       pageId: 7,
       pageListText: "## Pages\n7: https://example.com/workspace [selected]",
     }),
+    listLivePageInventory: async () => [
+      {
+        pageId: 7,
+        targetId: "target-workspace",
+        openerId: "",
+        url: "https://example.com/workspace",
+        title: "Workspace",
+      },
+    ],
     callBrowserTool: async (name, args) => {
       harness.browserCalls.push({ name, args });
       return {
@@ -103,7 +121,7 @@ test("openWorkspaceFlow creates a new workspace tab for a first-time workspaceRe
         ],
       };
     },
-    captureSnapshot: async () =>
+    captureSnapshotForPage: async () =>
       "## Latest page snapshot\nuid=7_0 RootWebArea \"Workspace\" url=\"https://example.com/workspace\"",
     readActiveTabIndex: async () => {
       throw new Error("readActiveTabIndex should not be used for a first-time workspace open flow");
@@ -132,6 +150,15 @@ test("openWorkspaceFlow refreshes an existing workspaceRef binding without openi
       pageId: 9,
       pageListText: "## Pages\n9: https://example.com/unused [selected]",
     }),
+    listLivePageInventory: async () => [
+      {
+        pageId: 4,
+        targetId: "target-inbox-page",
+        openerId: "",
+        url: "https://example.com/inbox",
+        title: "Inbox",
+      },
+    ],
     callBrowserTool: async (name, args) => {
       harness.browserCalls.push({ name, args });
       return {
@@ -143,7 +170,7 @@ test("openWorkspaceFlow refreshes an existing workspaceRef binding without openi
         ],
       };
     },
-    captureSnapshot: async () =>
+    captureSnapshotForPage: async () =>
       "## Latest page snapshot\nuid=4_0 RootWebArea \"Inbox\" url=\"https://example.com/inbox\"",
     readActiveTabIndex: async () => {
       throw new Error("readActiveTabIndex should not be used for an existing binding");
@@ -204,6 +231,15 @@ test("openWorkspaceFlow rebinds a stale workspaceRef when the previously selecte
       pageId: 8,
       pageListText: "## Pages\n8: https://example.com/rebound [selected]",
     }),
+    listLivePageInventory: async () => [
+      {
+        pageId: 8,
+        targetId: "target-rebound-page",
+        openerId: "",
+        url: "https://example.com/rebound",
+        title: "Rebound",
+      },
+    ],
     callBrowserTool: async (name, args) => {
       harness.browserCalls.push({ name, args });
       if (name === "select_page") {
@@ -218,7 +254,7 @@ test("openWorkspaceFlow rebinds a stale workspaceRef when the previously selecte
         ],
       };
     },
-    captureSnapshot: async () =>
+    captureSnapshotForPage: async () =>
       "## Latest page snapshot\nuid=8_0 RootWebArea \"Rebound\" url=\"https://example.com/rebound\"",
     readActiveTabIndex: async () => {
       throw new Error("readActiveTabIndex should not be used when rebinding a stale workspaceRef");
@@ -258,15 +294,7 @@ test("openWorkspaceFlow rebinds a stale workspaceRef when the previously selecte
     const result = await openWorkspaceFlow({ workspaceRef: "x-work" }, harness.deps);
 
     assert.equal(harness.openWorkspaceTabCalls, 1);
-    assert.deepEqual(harness.browserCalls, [
-      {
-        name: "select_page",
-        args: {
-          pageId: 25,
-          bringToFront: false,
-        },
-      },
-    ]);
+    assert.deepEqual(harness.browserCalls, []);
     assert.equal(result.workspaceRef, "x-work");
     assert.equal(result.tabRef, undefined);
     assert.match(result.summary, /workspace tab/i);
@@ -274,6 +302,144 @@ test("openWorkspaceFlow rebinds a stale workspaceRef when the previously selecte
     const binding = await harness.workspaceBindings.read("x-work");
     assert.equal(binding.browserTabIndex, 8);
     assert.equal(binding.page.normalizedPath, "/rebound");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("openWorkspaceFlow rebinds immediately when the persisted targetId disappears from live inventory", async () => {
+  const harness = await createHarness({
+    openWorkspaceTab: async () => ({
+      pageId: 8,
+      targetId: "target-rebound-page",
+      pageListText: "## Pages\n8: https://example.com/rebound [selected]",
+    }),
+    listLivePageInventory: async () => [
+      {
+        pageId: 25,
+        targetId: "target-someone-else",
+        openerId: "",
+        url: "https://example.com/old",
+        title: "Old",
+      },
+      {
+        pageId: 8,
+        targetId: "target-rebound-page",
+        openerId: "",
+        url: "https://example.com/rebound",
+        title: "Rebound",
+      },
+    ],
+    callBrowserTool: async (name, args) => {
+      harness.browserCalls.push({ name, args });
+      if (name === "select_page") {
+        throw new Error("select_page should not be used when the persisted targetId is already stale");
+      }
+      throw new Error(`unexpected browser tool ${name}`);
+    },
+    captureSnapshotForPage: async (pageId) => {
+      assert.equal(pageId, 8);
+      return "## Latest page snapshot\nuid=8_0 RootWebArea \"Rebound\" url=\"https://example.com/rebound\"";
+    },
+    readActiveTabIndex: async () => {
+      throw new Error("readActiveTabIndex should not be used when rebinding a stale targetId");
+    },
+  });
+
+  try {
+    await harness.workspaceState.writeWorkspace({
+      workspaceRef: "x-work",
+      activeWorkspaceTabRef: "workspace_tab_old",
+      page: {
+        origin: "https://x.com",
+        normalizedPath: "/old/path",
+        title: "(3) X",
+      },
+      browserTabIndex: 25,
+      snapshotPath: "/tmp/previous-snapshot.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+    await harness.workspaceState.writeWorkspaceTab({
+      workspaceRef: "x-work",
+      workspaceTabRef: "workspace_tab_old",
+      targetId: "target-old-page",
+      status: "open",
+      browserTabIndex: 25,
+      page: {
+        origin: "https://x.com",
+        normalizedPath: "/old/path",
+        title: "(3) X",
+      },
+      snapshotPath: "/tmp/previous-snapshot.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    const result = await openWorkspaceFlow({ workspaceRef: "x-work" }, harness.deps);
+
+    assert.equal(harness.openWorkspaceTabCalls, 1);
+    assert.deepEqual(harness.browserCalls, []);
+    assert.equal(result.page.normalizedPath, "/rebound");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("openWorkspaceFlow surfaces a workspace-domain stale-tab error when an explicit workspaceTabRef record is missing", async () => {
+  const harness = await createHarness({
+    openWorkspaceTab: async () => {
+      throw new Error("openWorkspaceTab should not run for a stale explicit workspaceTabRef");
+    },
+    listLivePageInventory: async () => [
+      {
+        pageId: 4,
+        targetId: "target-inbox-page",
+        openerId: "",
+        url: "https://example.com/inbox",
+        title: "Inbox",
+      },
+    ],
+    callBrowserTool: async (name, args) => {
+      harness.browserCalls.push({ name, args });
+      throw new Error(`unexpected browser tool ${name}`);
+    },
+    captureSnapshotForPage: async () => {
+      throw new Error("captureSnapshotForPage should not run for a stale explicit workspaceTabRef");
+    },
+    readActiveTabIndex: async () => {
+      throw new Error("readActiveTabIndex should not run for a stale explicit workspaceTabRef");
+    },
+  });
+
+  try {
+    await harness.workspaceState.writeWorkspace({
+      workspaceRef: "agent_main",
+      activeWorkspaceTabRef: "workspace_tab_live",
+      browserTabIndex: 4,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/inbox",
+        title: "Inbox",
+      },
+      snapshotPath: "/tmp/inbox.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    await assert.rejects(
+      () =>
+        openWorkspaceFlow(
+          {
+            workspaceRef: "agent_main",
+            workspaceTabRef: "workspace_tab_missing",
+          },
+          harness.deps,
+        ),
+      /workspaceTabRef workspace_tab_missing is not available in workspace agent_main; call GET \/tabs\?workspaceRef=agent_main to refresh the workspace tab list\./i,
+    );
+    assert.deepEqual(harness.browserCalls, []);
+    assert.equal(harness.openWorkspaceTabCalls, 0);
   } finally {
     await harness.cleanup();
   }
@@ -294,7 +460,16 @@ test("openWorkspaceFlow loads knowledge hits for the captured page identity", as
           },
         ],
       }),
-      captureSnapshot: async () =>
+      listLivePageInventory: async () => [
+        {
+          pageId: 7,
+          targetId: "target-workspace",
+          openerId: "",
+          url: "https://example.com/workspace",
+          title: "Workspace",
+        },
+      ],
+      captureSnapshotForPage: async () =>
         "## Latest page snapshot\nuid=7_0 RootWebArea \"Workspace\" url=\"https://example.com/workspace\"",
       readActiveTabIndex: async () => 7,
     },
@@ -328,7 +503,8 @@ test("openWorkspaceFlow loads knowledge hits for the captured page identity", as
 
 test("runWorkspaceAction resolves its target from workspace.activeWorkspaceTabRef instead of the cached binding", async () => {
   const harness = await createHarness({
-    captureSnapshot: async () => {
+    captureSnapshotForPage: async (pageId) => {
+      assert.equal(pageId, 4);
       const activePage = 4;
       return [
         "## Latest page snapshot",
@@ -384,6 +560,22 @@ test("runWorkspaceAction resolves its target from workspace.activeWorkspaceTabRe
       throw new Error(`unexpected browser tool ${name}`);
     },
     readActiveTabIndex: async () => 4,
+    listLivePageInventory: async () => [
+      {
+        pageId: 1,
+        targetId: "target-inbox-page",
+        openerId: "",
+        url: "https://example.com/inbox",
+        title: "Inbox",
+      },
+      {
+        pageId: 4,
+        targetId: "target-details-page",
+        openerId: "",
+        url: "https://example.com/details",
+        title: "Details",
+      },
+    ],
     openWorkspaceTab: async () => ({
       pageId: 4,
       pageListText: [
@@ -465,11 +657,11 @@ test("runWorkspaceAction keeps workspaceTabRef when the same targetId survives w
   const stableTargetId = "target-details-live";
 
   const harness = await createHarness({
-    captureSnapshot: async () =>
+    captureSnapshotForPage: async (pageId) =>
       [
         "## Latest page snapshot",
-        `uid=1_0 RootWebArea "Details" url="https://example.com/details"`,
-        `  uid=1_1 button "Reply"`,
+        `uid=${pageId}_0 RootWebArea "Details" url="https://example.com/details"`,
+        `  uid=${pageId}_1 button "Reply"`,
       ].join("\n"),
     callBrowserTool: async (name, args) => {
       harness.browserCalls.push({ name, args });
@@ -655,6 +847,83 @@ test("runWorkspaceAction keeps workspaceTabRef when the same targetId survives w
   }
 });
 
+test("runWorkspaceAction surfaces a stale target error instead of falling back to the cached browserTabIndex", async () => {
+  const harness = await createHarness({
+    captureSnapshotForPage: async () => {
+      throw new Error("captureSnapshotForPage should not run when the workspace target is already stale");
+    },
+    callBrowserTool: async (name, args) => {
+      harness.browserCalls.push({ name, args });
+      throw new Error(`unexpected browser tool ${name}`);
+    },
+    listLivePageInventory: async () => [
+      {
+        pageId: 2,
+        targetId: "target-someone-else",
+        openerId: "",
+        url: "https://example.com/details",
+        title: "Details",
+      },
+    ],
+    readActiveTabIndex: async () => {
+      throw new Error("readActiveTabIndex should not be used for stale target resolution");
+    },
+    openWorkspaceTab: async () => {
+      throw new Error("openWorkspaceTab should not run for stale action targets");
+    },
+  });
+
+  try {
+    await harness.workspaceState.writeWorkspace({
+      workspaceRef: "agent_main",
+      activeWorkspaceTabRef: "workspace_tab_stale",
+      browserTabIndex: 2,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/details",
+        title: "Details",
+      },
+      snapshotPath: "/tmp/details.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+    await harness.workspaceState.writeWorkspaceTab({
+      workspaceRef: "agent_main",
+      workspaceTabRef: "workspace_tab_stale",
+      targetId: "target-details-live",
+      status: "open",
+      browserTabIndex: 2,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/details",
+        title: "Details",
+      },
+      snapshotPath: "/tmp/details.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    await assert.rejects(
+      () =>
+        runWorkspaceAction(
+          {
+            action: "press",
+            workspaceRef: "agent_main",
+            toolName: "press_key",
+            toolArgs: {
+              key: "Enter",
+            },
+          },
+          harness.deps,
+        ),
+      /targetId target-details-live is no longer present in the live browser inventory/i,
+    );
+    assert.deepEqual(harness.browserCalls, []);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 async function createHarness(runtime, options = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-action-"));
   const workspaceBindings = new WorkspaceBindingStore(path.join(root, "workspace-bindings"));
@@ -670,11 +939,17 @@ async function createHarness(runtime, options = {}) {
     deps: {
       browser: {
         captureSnapshot: async () => runtime.captureSnapshot(),
+        captureSnapshotForPage: async (pageId) => {
+          if (typeof runtime.captureSnapshotForPage === "function") {
+            return runtime.captureSnapshotForPage(pageId);
+          }
+          return runtime.captureSnapshot();
+        },
         callBrowserTool: async (name, args) => runtime.callBrowserTool(name, args),
         readActiveTabIndex: async () => runtime.readActiveTabIndex(),
         listLivePageInventory: async () => {
           listLivePageInventoryCalls += 1;
-          const provider = runtime.listLivePageInventory ?? (() => []);
+          const provider = runtime.listLivePageInventory ?? (() => runtime.livePageInventory ?? []);
           const callIndex = listLivePageInventoryCalls;
           return provider(callIndex);
         },

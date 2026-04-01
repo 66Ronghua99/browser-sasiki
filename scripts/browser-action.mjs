@@ -27,8 +27,16 @@ export class DefaultBrowserRuntime {
     return this.client.captureSnapshot();
   }
 
+  async captureSnapshotForPage(pageId) {
+    return this.client.captureSnapshotForPage(pageId);
+  }
+
   async callBrowserTool(name, args) {
     return this.client.callBrowserTool(name, args);
+  }
+
+  async listLivePageInventory() {
+    return this.client.listLivePageInventory();
   }
 
   async readActiveTabIndex() {
@@ -75,13 +83,15 @@ export async function openWorkspaceFlow(args, deps) {
     ? await readWorkspaceTargetForOpen(workspaceState, providedWorkspaceRef, providedWorkspaceTabRef)
     : undefined;
   const captureTarget = await resolveWorkspaceTarget(args, deps, providedWorkspaceRef, existingWorkspaceTarget);
-  const rawSnapshotText = await deps.browser.captureSnapshot();
+  const rawSnapshotText = await deps.browser.captureSnapshotForPage(captureTarget.pageId);
   const snapshotText = normalizeCapturedSnapshot(captureTarget.pageListText, rawSnapshotText, captureTarget.pageId);
   const { snapshotPath } = await deps.snapshots.write(snapshotText);
   const page = pageIdentityFromSnapshotText(snapshotText);
   const workspaceRef = providedWorkspaceRef ?? mintWorkspaceRef();
+  const targetId = await resolveLiveTargetIdForPage(deps.browser, captureTarget.pageId);
   const workspaceStateResult = await resolveWorkspaceReconciler(workspaceState).reconcileWorkspace({
     workspaceRef,
+    targetId,
     browserTabIndex: captureTarget.pageId,
     page,
     snapshotPath,
@@ -119,7 +129,7 @@ export async function runBrowserAction(input, deps) {
 export async function runWorkspaceAction(input, deps) {
   const workspaceRef = requireNonEmptyString(input.workspaceRef, "workspaceRef");
   const workspaceState = resolveWorkspaceState(deps);
-  const target = await resolveActionWorkspaceTarget(input, workspaceState, workspaceRef);
+  const target = await resolveActionWorkspaceTarget(input, workspaceState, workspaceRef, deps.browser);
   const preActionPageListText = input.preselectBoundTab !== false
     ? await selectCapturedPage(deps.browser, target.browserTabIndex)
     : await readBrowserPageList(deps.browser);
@@ -132,13 +142,15 @@ export async function runWorkspaceAction(input, deps) {
 
   const postActionPageListText = await readBrowserPageList(deps.browser, preActionPageListText);
   const liveTabs = parseTabInventory(postActionPageListText);
+  const livePageInventory = await readLivePageInventory(deps.browser);
   const browserTabIndex = await resolveCapturedBrowserTabIndex(
     deps,
     liveTabs,
     input.nextBrowserTabIndex ?? target.browserTabIndex,
   );
+  const activeLivePage = requireLivePageForPageId(livePageInventory, browserTabIndex);
   const selectedPageListText = await selectCapturedPage(deps.browser, browserTabIndex);
-  const rawSnapshotText = await deps.browser.captureSnapshot();
+  const rawSnapshotText = await deps.browser.captureSnapshotForPage(browserTabIndex);
   const snapshotText = normalizeCapturedSnapshot(selectedPageListText, rawSnapshotText, browserTabIndex);
   const { snapshotPath } = await deps.snapshots.write(snapshotText);
   const page = pageIdentityFromSnapshotText(snapshotText);
@@ -152,15 +164,17 @@ export async function runWorkspaceAction(input, deps) {
 
   const workspaceStateResult = await resolveWorkspaceReconciler(workspaceState).reconcileWorkspace({
     workspaceRef,
+    targetId: activeLivePage.targetId,
     browserTabIndex,
     page,
     snapshotPath,
-    workspaceTabRef: browserTabIndex === target.browserTabIndex ? target.workspaceTabRef : undefined,
+    workspaceTabRef: activeLivePage.targetId === target.targetId ? target.workspaceTabRef : undefined,
   });
   await syncWorkspaceTabInventory({
     workspaceRef,
     workspaceState,
     liveTabs,
+    livePageInventory,
     preActionPageIds,
     activeWorkspaceTabRef: workspaceStateResult.workspace.activeWorkspaceTabRef,
     activeBrowserTabIndex: browserTabIndex,
@@ -327,7 +341,10 @@ async function resolveWorkspaceTarget(
 
   if (providedWorkspaceRef && existingWorkspaceTarget?.workspaceTab) {
     try {
-      const expectedPageId = existingWorkspaceTarget.workspaceTab.browserTabIndex;
+      const expectedPageId = await resolveLivePageIdForTarget(
+        deps.browser,
+        existingWorkspaceTarget.workspaceTab.targetId,
+      );
       const pageListText = await selectCapturedPage(deps.browser, expectedPageId);
       const resolvedPageId = await resolveCapturedBrowserTabIndex(
         deps,
@@ -345,9 +362,10 @@ async function resolveWorkspaceTarget(
         createdWorkspaceTab: false,
         reusedBinding: true,
         workspaceTabRef: existingWorkspaceTarget.workspaceTab.workspaceTabRef,
+        targetId: existingWorkspaceTarget.workspaceTab.targetId,
       };
     } catch (error) {
-      if (!isMissingCapturedPageError(error)) {
+      if (!isMissingCapturedPageError(error) && !isStaleWorkspaceTargetError(error)) {
         throw error;
       }
     }
@@ -363,6 +381,7 @@ async function resolveWorkspaceTarget(
       createdWorkspaceTab: true,
       reusedBinding: false,
       workspaceTabRef: existingWorkspaceTarget.workspaceTab?.workspaceTabRef,
+      targetId: reboundWorkspaceTab.targetId,
     };
   }
 
@@ -373,6 +392,7 @@ async function resolveWorkspaceTarget(
     createdWorkspaceTab: true,
     reusedBinding: false,
     workspaceTabRef: undefined,
+    targetId: workspaceTab.targetId,
   };
 }
 
@@ -441,26 +461,20 @@ async function readWorkspaceTargetForOpen(workspaceState, workspaceRef, workspac
     };
   } catch (error) {
     if (isMissingFileError(error)) {
-      return {
-        workspace,
-        workspaceTab: {
-          workspaceRef,
-          workspaceTabRef,
-          browserTabIndex: workspace.browserTabIndex,
-          page: workspace.page,
-          snapshotPath: workspace.snapshotPath,
-        },
-      };
+      throw new Error(
+        `workspaceTabRef ${workspaceTabRef} is not available in workspace ${workspaceRef}; call GET /tabs?workspaceRef=${workspaceRef} to refresh the workspace tab list.`,
+      );
     }
     throw error;
   }
 }
 
-async function resolveActionWorkspaceTarget(input, workspaceState, workspaceRef) {
+async function resolveActionWorkspaceTarget(input, workspaceState, workspaceRef, browser) {
   if (typeof input.toolArgs?.pageId === "number") {
     return {
       browserTabIndex: input.toolArgs.pageId,
       workspaceTabRef: input.workspaceTabRef,
+      targetId: undefined,
     };
   }
 
@@ -468,8 +482,9 @@ async function resolveActionWorkspaceTarget(input, workspaceState, workspaceRef)
     try {
       const workspaceTab = await workspaceState.readWorkspaceTab(workspaceRef, input.workspaceTabRef);
       return {
-        browserTabIndex: workspaceTab.browserTabIndex,
+        browserTabIndex: await resolveLivePageIdForTarget(browser, workspaceTab.targetId),
         workspaceTabRef: workspaceTab.workspaceTabRef,
+        targetId: workspaceTab.targetId,
       };
     } catch (error) {
       if (isMissingFileError(error)) {
@@ -490,8 +505,12 @@ async function resolveActionWorkspaceTarget(input, workspaceState, workspaceRef)
   }
 
   return {
-    browserTabIndex: activeTarget.workspaceTab.browserTabIndex,
+    browserTabIndex: await resolveLivePageIdForTarget(
+      browser,
+      activeTarget.workspaceTab.targetId,
+    ),
     workspaceTabRef: activeTarget.workspaceTab.workspaceTabRef,
+    targetId: activeTarget.workspaceTab.targetId,
   };
 }
 
@@ -539,9 +558,12 @@ async function resolveCapturedBrowserTabIndex(
 async function syncWorkspaceTabInventory(input) {
   const timestamp = new Date().toISOString();
   const existingWorkspaceTabs = await input.workspaceState.listWorkspaceTabs(input.workspaceRef);
-  const existingByIndex = new Map(existingWorkspaceTabs.map((tab) => [tab.browserTabIndex, tab]));
+  const existingByTargetId = new Map(existingWorkspaceTabs.map((tab) => [tab.targetId, tab]));
+  const livePageByPageId = new Map(input.livePageInventory.map((page) => [page.pageId, page]));
   const adoptedTabIndexes = new Set([
-    ...existingWorkspaceTabs.map((tab) => tab.browserTabIndex),
+    ...existingWorkspaceTabs
+      .map((tab) => tab.browserTabIndex)
+      .filter((pageId) => Number.isInteger(pageId) && pageId >= 0),
     input.activeBrowserTabIndex,
     ...input.liveTabs
       .filter((tab) => !input.preActionPageIds.has(tab.index))
@@ -553,7 +575,11 @@ async function syncWorkspaceTabInventory(input) {
       continue;
     }
 
-    const existing = existingByIndex.get(liveTab.index);
+    const livePage = livePageByPageId.get(liveTab.index);
+    if (!livePage) {
+      continue;
+    }
+    const existing = existingByTargetId.get(livePage.targetId);
     const workspaceTabRef = liveTab.index === input.activeBrowserTabIndex
       ? input.activeWorkspaceTabRef
       : existing?.workspaceTabRef ?? `workspace_tab_${randomUUID()}`;
@@ -567,6 +593,8 @@ async function syncWorkspaceTabInventory(input) {
     await input.workspaceState.writeWorkspaceTab({
       workspaceRef: input.workspaceRef,
       workspaceTabRef,
+      targetId: livePage.targetId,
+      status: "open",
       browserTabIndex: liveTab.index,
       page,
       snapshotPath,
@@ -574,6 +602,44 @@ async function syncWorkspaceTabInventory(input) {
       updatedAt: timestamp,
     });
   }
+}
+
+async function readLivePageInventory(browser) {
+  if (typeof browser.listLivePageInventory !== "function") {
+    throw new Error("browser runtime cannot list live page inventory with targetId records");
+  }
+  const inventory = await browser.listLivePageInventory();
+  if (!Array.isArray(inventory)) {
+    throw new Error("browser runtime returned a malformed live page inventory");
+  }
+  return inventory;
+}
+
+async function resolveLivePageIdForTarget(browser, targetId) {
+  if (typeof targetId !== "string" || targetId.length === 0) {
+    throw new Error("workspace tab targetId is required to resolve a live browser page");
+  }
+  const livePage = (await readLivePageInventory(browser)).find((page) => page.targetId === targetId);
+  if (!livePage) {
+    throw createStaleWorkspaceTargetError(targetId);
+  }
+  return livePage.pageId;
+}
+
+async function resolveLiveTargetIdForPage(browser, pageId) {
+  const livePage = (await readLivePageInventory(browser)).find((page) => page.pageId === pageId);
+  if (livePage?.targetId) {
+    return livePage.targetId;
+  }
+  throw new Error(`No live targetId found for pageId ${pageId}`);
+}
+
+function requireLivePageForPageId(livePageInventory, pageId) {
+  const livePage = livePageInventory.find((page) => page.pageId === pageId);
+  if (!livePage?.targetId) {
+    throw new Error(`No live targetId found for pageId ${pageId}`);
+  }
+  return livePage;
 }
 
 function requireNonEmptyString(value, label) {
@@ -592,6 +658,14 @@ function optionalNonEmptyString(value, label) {
     return undefined;
   }
   return requireNonEmptyString(value, label);
+}
+
+function createStaleWorkspaceTargetError(targetId) {
+  return new Error(`targetId ${targetId} is no longer present in the live browser inventory`);
+}
+
+function isStaleWorkspaceTargetError(error) {
+  return error instanceof Error && /is no longer present in the live browser inventory/i.test(error.message);
 }
 
 function isMissingCapturedPageError(error) {

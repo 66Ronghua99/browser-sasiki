@@ -12,12 +12,16 @@ function createFakeBrowserBridge() {
     tabs: [
       {
         index: 1,
+        targetId: "target-dashboard",
+        openerId: "",
         title: "Dashboard",
         url: "https://example.com/dashboard",
         active: true,
       },
       {
         index: 2,
+        targetId: "target-details",
+        openerId: "",
         title: "Details",
         url: "https://example.com/details",
         active: false,
@@ -30,11 +34,22 @@ function createFakeBrowserBridge() {
     async listPages() {
       return renderPageList(state.tabs);
     },
+    async listLivePageInventory() {
+      return state.tabs.map((tab) => ({
+        pageId: tab.index,
+        targetId: tab.targetId,
+        openerId: tab.openerId,
+        url: tab.url,
+        title: tab.title,
+      }));
+    },
     async newPage(url) {
       state.tabs = state.tabs.map((tab) =>
         tab.index === 1
           ? {
               ...tab,
+              targetId: "target-workspace",
+              openerId: "",
               title: "Workspace",
               url,
               active: true,
@@ -45,6 +60,10 @@ function createFakeBrowserBridge() {
     },
     async captureSnapshot() {
       const active = state.tabs.find((tab) => tab.active) ?? state.tabs[0];
+      return this.captureSnapshotForPage(active?.index ?? state.tabs[0]?.index ?? 0);
+    },
+    async captureSnapshotForPage(pageId) {
+      const active = state.tabs.find((tab) => tab.index === pageId) ?? state.tabs[0];
       return [
         "## Latest page snapshot",
         `uid=root RootWebArea "${active.title}" url="${active.url}"`,
@@ -91,6 +110,8 @@ function createPopupOpeningBrowserBridge() {
     tabs: [
       {
         index: 1,
+        targetId: "target-inbox",
+        openerId: "",
         title: "Inbox",
         url: "https://example.com/inbox",
         active: true,
@@ -103,10 +124,21 @@ function createPopupOpeningBrowserBridge() {
     async listPages() {
       return renderPageList(state.tabs);
     },
+    async listLivePageInventory() {
+      return state.tabs.map((tab) => ({
+        pageId: tab.index,
+        targetId: tab.targetId,
+        openerId: tab.openerId,
+        url: tab.url,
+        title: tab.title,
+      }));
+    },
     async newPage(url) {
       state.tabs = [
         {
           index: 1,
+          targetId: "target-workspace",
+          openerId: "",
           title: "Workspace",
           url,
           active: true,
@@ -116,6 +148,10 @@ function createPopupOpeningBrowserBridge() {
     },
     async captureSnapshot() {
       const active = state.tabs.find((tab) => tab.active) ?? state.tabs[0];
+      return this.captureSnapshotForPage(active?.index ?? state.tabs[0]?.index ?? 0);
+    },
+    async captureSnapshotForPage(pageId) {
+      const active = state.tabs.find((tab) => tab.index === pageId) ?? state.tabs[0];
       return [
         "## Latest page snapshot",
         `uid=root RootWebArea "${active.title}" url="${active.url}"`,
@@ -137,12 +173,16 @@ function createPopupOpeningBrowserBridge() {
         state.tabs = [
           {
             index: 1,
+            targetId: "target-workspace",
+            openerId: "",
             title: "Inbox",
             url: "https://example.com/inbox",
             active: false,
           },
           {
             index: 2,
+            targetId: "target-conversation",
+            openerId: "target-workspace",
             title: "Conversation",
             url: "https://example.com/conversation/42",
             active: true,
@@ -233,6 +273,8 @@ test("browser-sessiond bridges workspace-first listing and tab-selection HTTP on
     await daemon.workspaceState.writeWorkspaceTab({
       workspaceRef: workspaces.workspaceRef,
       workspaceTabRef: detailsTab.workspaceTabRef,
+      targetId: "target-details",
+      status: "open",
       browserTabIndex: 2,
       page: {
         origin: "https://example.com",
@@ -422,11 +464,11 @@ test("browser-sessiond click resolves workspace B from workspace.activeWorkspace
     await daemon.workspaceBindings.write({
       workspaceRef: workspaceA.workspaceRef,
       browserTabIndex: 1,
-      snapshotPath: "/tmp/inbox-a.md",
+      snapshotPath: "/tmp/workspace-a.md",
       page: {
         origin: "https://example.com",
-        normalizedPath: "/inbox-a",
-        title: "Inbox A",
+        normalizedPath: "/workspace-a",
+        title: "Workspace",
       },
     });
     await daemon.workspaceState.writeWorkspace({
@@ -435,23 +477,25 @@ test("browser-sessiond click resolves workspace B from workspace.activeWorkspace
       browserTabIndex: 1,
       page: {
         origin: "https://example.com",
-        normalizedPath: "/inbox-a",
-        title: "Inbox A",
+        normalizedPath: "/workspace-a",
+        title: "Workspace",
       },
-      snapshotPath: "/tmp/inbox-a.md",
+      snapshotPath: "/tmp/workspace-a.md",
       createdAt: "2026-03-31T00:00:00.000Z",
       updatedAt: "2026-03-31T00:00:00.000Z",
     });
     await daemon.workspaceState.writeWorkspaceTab({
       workspaceRef: workspaceA.workspaceRef,
       workspaceTabRef: seededTabsA[0].workspaceTabRef,
+      targetId: "target-workspace",
+      status: "open",
       browserTabIndex: 1,
       page: {
         origin: "https://example.com",
-        normalizedPath: "/inbox-a",
-        title: "Inbox A",
+        normalizedPath: "/workspace-a",
+        title: "Workspace",
       },
-      snapshotPath: "/tmp/inbox-a.md",
+      snapshotPath: "/tmp/workspace-a.md",
       createdAt: "2026-03-31T00:00:00.000Z",
       updatedAt: "2026-03-31T00:00:00.000Z",
     });
@@ -482,6 +526,8 @@ test("browser-sessiond click resolves workspace B from workspace.activeWorkspace
     await daemon.workspaceState.writeWorkspaceTab({
       workspaceRef: workspaceB.workspaceRef,
       workspaceTabRef: detailsTabB.workspaceTabRef,
+      targetId: "target-details",
+      status: "open",
       browserTabIndex: 2,
       page: {
         origin: "https://example.com",
@@ -642,6 +688,8 @@ test("browser-sessiond record-knowledge returns the bridged workspace response a
     await daemon.workspaceState.writeWorkspaceTab({
       workspaceRef: workspaces.workspaceRef,
       workspaceTabRef: detailsTab.workspaceTabRef,
+      targetId: "target-details",
+      status: "open",
       browserTabIndex: 2,
       page: {
         origin: "https://example.com",

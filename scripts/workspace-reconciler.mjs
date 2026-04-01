@@ -16,11 +16,11 @@ export class WorkspaceReconciler {
     const timestamp = this.now();
     const workspace = await this.readWorkspaceOrUndefined(input.workspaceRef);
     const workspaceTabs = await this.store.listWorkspaceTabs(input.workspaceRef);
-    const matchingWorkspaceTab = workspaceTabs.find((tab) => tab.browserTabIndex === input.browserTabIndex);
+    const matchingWorkspaceTab = workspaceTabs.find((tab) => tab.targetId === input.targetId);
     const requestedWorkspaceTab = input.workspaceTabRef
       ? workspaceTabs.find((tab) => tab.workspaceTabRef === input.workspaceTabRef)
       : undefined;
-    const persistedWorkspaceTabRecord = requestedWorkspaceTab ?? matchingWorkspaceTab;
+    const persistedWorkspaceTabRecord = matchingWorkspaceTab ?? requestedWorkspaceTab;
     const activeWorkspaceTabRef = persistedWorkspaceTabRecord?.workspaceTabRef ?? mintWorkspaceTabRef();
 
     const persistedWorkspace = {
@@ -35,6 +35,8 @@ export class WorkspaceReconciler {
     const persistedWorkspaceTab = {
       workspaceRef: input.workspaceRef,
       workspaceTabRef: activeWorkspaceTabRef,
+      targetId: input.targetId,
+      status: "open",
       browserTabIndex: input.browserTabIndex,
       page: clonePageIdentity(input.page),
       snapshotPath: input.snapshotPath,
@@ -70,6 +72,7 @@ function assertReconcileInput(input) {
     throw new TypeError("input must be an object");
   }
   assertNonEmptyString(input.workspaceRef, "workspaceRef");
+  assertNonEmptyString(input.targetId, "targetId");
   assertNonNegativeInteger(input.browserTabIndex, "browserTabIndex");
   assertPageIdentity(input.page);
   assertNonEmptyString(input.snapshotPath, "snapshotPath");

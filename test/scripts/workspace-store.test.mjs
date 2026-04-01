@@ -80,7 +80,7 @@ test("workspace store round-trips workspace and workspace-tab state", async () =
   }
 });
 
-test("workspace store requires targetId and status on workspace-tab records", async () => {
+test("workspace store requires targetId and status on workspace-tab records while allowing browserTabIndex to be optional cache", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-workspace-tab-record-"));
   const store = new WorkspaceStore(path.join(root, "workspace-state"));
 
@@ -144,7 +144,6 @@ test("workspace store requires targetId and status on workspace-tab records", as
       workspaceTabRef: "workspace_tab_demo",
       targetId: "page-home",
       status: "closed",
-      browserTabIndex: 7,
       page: {
         origin: "https://example.com",
         normalizedPath: "/workspace",
@@ -158,12 +157,13 @@ test("workspace store requires targetId and status on workspace-tab records", as
     const workspaceTab = await store.readWorkspaceTab("agent_main", "workspace_tab_demo");
     assert.equal(workspaceTab.targetId, "page-home");
     assert.equal(workspaceTab.status, "closed");
+    assert.equal(workspaceTab.browserTabIndex, undefined);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("workspace reconciler keeps an explicitly requested workspace-tab identity while overwriting stale live state", async () => {
+test("workspace reconciler reuses the existing workspace-tab identity when the same targetId survives with a shifted browserTabIndex", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-workspace-reconciler-"));
   const store = new WorkspaceStore(path.join(root, "workspace-state"));
   const reconciler = new WorkspaceReconciler(store);
@@ -201,6 +201,7 @@ test("workspace reconciler keeps an explicitly requested workspace-tab identity 
 
     const result = await reconciler.reconcileWorkspace({
       workspaceRef: "agent_main",
+      targetId: "page-home-stable",
       browserTabIndex: 7,
       page: {
         origin: "https://example.com",
@@ -214,6 +215,7 @@ test("workspace reconciler keeps an explicitly requested workspace-tab identity 
     assert.equal(result.workspace.activeWorkspaceTabRef, "workspace_tab_cached");
     assert.equal(result.workspace.browserTabIndex, 7);
     assert.equal(result.workspace.page.normalizedPath, "/workspace");
+    assert.equal(result.workspaceTab.targetId, "page-home-stable");
 
     const cachedWorkspace = await store.readWorkspace("agent_main");
     const cachedWorkspaceTab = await store.readWorkspaceTab("agent_main", "workspace_tab_cached");
@@ -221,6 +223,88 @@ test("workspace reconciler keeps an explicitly requested workspace-tab identity 
     assert.equal(cachedWorkspace.page.normalizedPath, "/workspace");
     assert.equal(cachedWorkspaceTab.browserTabIndex, 7);
     assert.equal(cachedWorkspaceTab.page.normalizedPath, "/workspace");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace reconciler prefers the existing target-owned workspaceTabRef over a conflicting requested workspaceTabRef", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-workspace-reconciler-"));
+  const store = new WorkspaceStore(path.join(root, "workspace-state"));
+  const reconciler = new WorkspaceReconciler(store);
+
+  try {
+    await store.writeWorkspace({
+      workspaceRef: "agent_main",
+      activeWorkspaceTabRef: "workspace_tab_target_owner",
+      browserTabIndex: 3,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/inbox",
+        title: "Inbox",
+      },
+      snapshotPath: "/tmp/inbox.md",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
+    });
+
+    await store.writeWorkspaceTab({
+      workspaceRef: "agent_main",
+      workspaceTabRef: "workspace_tab_target_owner",
+      targetId: "page-target",
+      status: "open",
+      browserTabIndex: 3,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/inbox",
+        title: "Inbox",
+      },
+      snapshotPath: "/tmp/inbox.md",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
+    });
+
+    await store.writeWorkspaceTab({
+      workspaceRef: "agent_main",
+      workspaceTabRef: "workspace_tab_stale_request",
+      targetId: "page-stale",
+      status: "open",
+      browserTabIndex: 4,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/stale",
+        title: "Stale",
+      },
+      snapshotPath: "/tmp/stale.md",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
+    });
+
+    const result = await reconciler.reconcileWorkspace({
+      workspaceRef: "agent_main",
+      workspaceTabRef: "workspace_tab_stale_request",
+      targetId: "page-target",
+      browserTabIndex: 9,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/details",
+        title: "Details",
+      },
+      snapshotPath: "/tmp/details.md",
+    });
+
+    assert.equal(result.workspace.activeWorkspaceTabRef, "workspace_tab_target_owner");
+    assert.equal(result.workspaceTab.workspaceTabRef, "workspace_tab_target_owner");
+    assert.equal(result.workspaceTab.targetId, "page-target");
+
+    const targetOwnedTab = await store.readWorkspaceTab("agent_main", "workspace_tab_target_owner");
+    const staleRequestedTab = await store.readWorkspaceTab("agent_main", "workspace_tab_stale_request");
+
+    assert.equal(targetOwnedTab.browserTabIndex, 9);
+    assert.equal(targetOwnedTab.page.normalizedPath, "/details");
+    assert.equal(staleRequestedTab.targetId, "page-stale");
+    assert.equal(staleRequestedTab.browserTabIndex, 4);
+    assert.equal(staleRequestedTab.page.normalizedPath, "/stale");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -264,6 +348,7 @@ test("workspace reconciler mints a fresh workspace-tab identity when live state 
 
     const result = await reconciler.reconcileWorkspace({
       workspaceRef: "agent_main",
+      targetId: "page-details-stable",
       browserTabIndex: 9,
       page: {
         origin: "https://example.com",
@@ -284,8 +369,10 @@ test("workspace reconciler mints a fresh workspace-tab identity when live state 
 
     assert.equal(originalTab.browserTabIndex, 3);
     assert.equal(originalTab.page.normalizedPath, "/inbox");
+    assert.equal(originalTab.targetId, "page-inbox-stable");
     assert.equal(newTab.browserTabIndex, 9);
     assert.equal(newTab.page.normalizedPath, "/details");
+    assert.equal(newTab.targetId, "page-details-stable");
     assert.equal(workspaceTabs.length, 2);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -314,6 +401,7 @@ test("workspace reconciler does not reuse a stale workspace.activeWorkspaceTabRe
 
     const result = await reconciler.reconcileWorkspace({
       workspaceRef: "agent_main",
+      targetId: "page-details-stable",
       browserTabIndex: 7,
       page: {
         origin: "https://example.com",

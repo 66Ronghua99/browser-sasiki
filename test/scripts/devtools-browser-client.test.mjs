@@ -245,6 +245,7 @@ test("devtools browser client lists live pages and raw targets from the attached
   assert.deepEqual(targets, [
     {
       targetId: "page-home",
+      openerId: "",
       type: "page",
       title: "Home",
       url: "https://example.com/home",
@@ -252,6 +253,7 @@ test("devtools browser client lists live pages and raw targets from the attached
     },
     {
       targetId: "page-inbox",
+      openerId: "",
       type: "page",
       title: "Inbox",
       url: "https://example.com/inbox",
@@ -259,6 +261,7 @@ test("devtools browser client lists live pages and raw targets from the attached
     },
     {
       targetId: "worker-1",
+      openerId: "",
       type: "service_worker",
       title: "Service Worker",
       url: "https://example.com/sw.js",
@@ -269,16 +272,32 @@ test("devtools browser client lists live pages and raw targets from the attached
   assert.equal(context.newPageCalls, 0);
 });
 
-test("devtools browser client lists live page inventory by targetId/openerId join (not positional zip)", async () => {
+test("devtools browser client lists live page inventory from per-page target info", async () => {
   const { browser } = createHarnessBrowser({
     pages: [
       createPage({
         url: "https://example.com/home",
         title: "Home",
+        targetInfo: {
+          targetId: "page-home",
+          type: "page",
+          openerId: "opener-root",
+          title: "Home",
+          url: "https://example.com/home",
+          attached: true,
+        },
       }),
       createPage({
         url: "https://example.com/inbox",
         title: "Inbox",
+        targetInfo: {
+          targetId: "page-inbox",
+          type: "page",
+          title: "Inbox",
+          url: "https://example.com/inbox",
+          openerId: "page-home",
+          attached: true,
+        },
       }),
     ],
     targetInfos: [
@@ -337,6 +356,104 @@ test("devtools browser client lists live page inventory by targetId/openerId joi
   ]);
 });
 
+test("devtools browser client keeps duplicate title/url pages distinct by targetId", async () => {
+  const { browser } = createHarnessBrowser({
+    pages: [
+      createPage({
+        url: "https://example.com/thread/42",
+        title: "Thread",
+        targetInfo: {
+          targetId: "page-thread-a",
+          type: "page",
+          openerId: "page-home",
+          title: "Thread",
+          url: "https://example.com/thread/42",
+          attached: true,
+        },
+      }),
+      createPage({
+        url: "https://example.com/thread/42",
+        title: "Thread",
+        targetInfo: {
+          targetId: "page-thread-b",
+          type: "page",
+          openerId: "page-home",
+          title: "Thread",
+          url: "https://example.com/thread/42",
+          attached: true,
+        },
+      }),
+    ],
+    targetInfos: [
+      {
+        targetId: "page-thread-b",
+        type: "page",
+        openerId: "page-home",
+        title: "Thread",
+        url: "https://example.com/thread/42",
+        attached: true,
+      },
+      {
+        targetId: "page-thread-a",
+        type: "page",
+        openerId: "page-home",
+        title: "Thread",
+        url: "https://example.com/thread/42",
+        attached: true,
+      },
+    ],
+  });
+  const client = new DevtoolsBrowserClient(browser);
+
+  const inventory = await client.listLivePageInventory();
+
+  assert.deepEqual(inventory, [
+    {
+      pageId: 0,
+      targetId: "page-thread-a",
+      openerId: "page-home",
+      url: "https://example.com/thread/42",
+      title: "Thread",
+    },
+    {
+      pageId: 1,
+      targetId: "page-thread-b",
+      openerId: "page-home",
+      url: "https://example.com/thread/42",
+      title: "Thread",
+    },
+  ]);
+});
+
+test("devtools browser client captures a snapshot for an explicit pageId", async () => {
+  const { browser } = createHarnessBrowser({
+    pages: [
+      createPage({
+        url: "https://example.com/home",
+        title: "Home",
+      }),
+      createPage({
+        url: "https://example.com/thread/42",
+        title: "Thread",
+      }),
+    ],
+    targetInfos: [],
+    axNodes: [
+      {
+        nodeId: "1_0",
+        role: { value: "RootWebArea" },
+        name: { value: "Thread" },
+      },
+    ],
+  });
+  const client = new DevtoolsBrowserClient(browser);
+
+  const snapshot = await client.captureSnapshotForPage(1);
+
+  assert.match(snapshot, /url="https:\/\/example\.com\/thread\/42"/);
+  assert.match(snapshot, /RootWebArea "Thread"/);
+});
+
 test("devtools browser client opens a workspace tab inside the connected browser context", async () => {
   const existingPage = createPage({
     url: "https://example.com/home",
@@ -357,6 +474,7 @@ test("devtools browser client opens a workspace tab inside the connected browser
 
   assert.deepEqual(result, {
     pageId: 1,
+    targetId: "",
     url: "https://example.com/workspace",
     title: "Workspace",
   });
@@ -572,6 +690,11 @@ function createHarnessBrowser({
           if (method === "Target.getTargets") {
             return { targetInfos };
           }
+          if (method === "Target.getTargetInfo") {
+            return page.targetInfo
+              ? { targetInfo: page.targetInfo }
+              : { targetInfo: null };
+          }
           if (method === "Accessibility.enable") {
             return {};
           }
@@ -615,6 +738,7 @@ function createHarnessBrowser({
 function createPage({
   url,
   title,
+  targetInfo = null,
 }) {
   const page = {
     gotoCalls: [],
@@ -653,6 +777,7 @@ function createPage({
     context: () => page.__context,
     currentUrl: url,
     currentTitle: title,
+    targetInfo,
   };
 
   return page;
