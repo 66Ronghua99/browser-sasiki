@@ -447,6 +447,32 @@ test("devtools browser client explicit selector helpers stay on the resolved pag
   assert.equal(page.bringToFrontCalls, 0);
 });
 
+test("devtools browser client click routes to the explicit pageId without a shared selected-page cursor", async () => {
+  const pages = [
+    createPage({
+      url: "https://example.com/inbox",
+      title: "Inbox",
+    }),
+    createPage({
+      url: "https://example.com/details",
+      title: "Details",
+    }),
+  ];
+  const { browser } = createHarnessBrowser({
+    pages,
+    targetInfos: [],
+  });
+  const client = new DevtoolsBrowserClient(browser);
+
+  await client.callBrowserTool("click", {
+    pageId: 1,
+    selector: "[data-uid='reply_button']",
+  });
+
+  assert.deepEqual(pages[0].clickCalls, []);
+  assert.deepEqual(pages[1].clickCalls, ["[data-uid='reply_button']"]);
+});
+
 function createHarnessBrowser({
   pages,
   targetInfos,

@@ -5,7 +5,7 @@ import process from "node:process";
 import { createConnectedDevtoolsBrowserClient } from "./devtools-browser-client.mjs";
 import { KnowledgeStore } from "./knowledge-store.mjs";
 import { defaultRuntimeRoots } from "./paths.mjs";
-import { pageIdentityFromSnapshotText } from "./page-identity.mjs";
+import { pageIdentityFromSnapshotText, pageIdentityFromUrl } from "./page-identity.mjs";
 import { SnapshotStore } from "./snapshot-store.mjs";
 import { WorkspaceReconciler } from "./workspace-reconciler.mjs";
 import { WorkspaceStore } from "./workspace-store.mjs";
@@ -17,6 +17,10 @@ const DEFAULT_WORKSPACE_TAB_URL = "chrome://newtab/";
 export class DefaultBrowserRuntime {
   constructor(client) {
     this.client = client;
+  }
+
+  async listPages() {
+    return this.client.listPages();
   }
 
   async captureSnapshot() {
@@ -65,18 +69,23 @@ export async function openWorkspaceFlow(args, deps) {
   await deps.snapshots.cleanupExpired();
 
   const providedWorkspaceRef = optionalNonEmptyString(args.workspaceRef, "workspaceRef");
-  const captureTarget = await resolveWorkspaceTarget(args, deps, providedWorkspaceRef);
+  const providedWorkspaceTabRef = optionalNonEmptyString(args.workspaceTabRef, "workspaceTabRef");
+  const workspaceState = resolveWorkspaceState(deps);
+  const existingWorkspaceTarget = providedWorkspaceRef
+    ? await readWorkspaceTargetForOpen(workspaceState, providedWorkspaceRef, providedWorkspaceTabRef)
+    : undefined;
+  const captureTarget = await resolveWorkspaceTarget(args, deps, providedWorkspaceRef, existingWorkspaceTarget);
   const rawSnapshotText = await deps.browser.captureSnapshot();
   const snapshotText = normalizeCapturedSnapshot(captureTarget.pageListText, rawSnapshotText, captureTarget.pageId);
   const { snapshotPath } = await deps.snapshots.write(snapshotText);
   const page = pageIdentityFromSnapshotText(snapshotText);
   const workspaceRef = providedWorkspaceRef ?? mintWorkspaceRef();
-  const workspaceState = resolveWorkspaceState(deps);
   const workspaceStateResult = await resolveWorkspaceReconciler(workspaceState).reconcileWorkspace({
     workspaceRef,
     browserTabIndex: captureTarget.pageId,
     page,
     snapshotPath,
+    workspaceTabRef: captureTarget.workspaceTabRef,
   });
 
   await deps.workspaceBindings.write({
@@ -109,37 +118,54 @@ export async function runBrowserAction(input, deps) {
 
 export async function runWorkspaceAction(input, deps) {
   const workspaceRef = requireNonEmptyString(input.workspaceRef, "workspaceRef");
-  const binding = await readWorkspaceBinding(deps.workspaceBindings, workspaceRef);
+  const workspaceState = resolveWorkspaceState(deps);
+  const target = await resolveActionWorkspaceTarget(input, workspaceState, workspaceRef);
+  const preActionPageListText = input.preselectBoundTab !== false
+    ? await selectCapturedPage(deps.browser, target.browserTabIndex)
+    : await readBrowserPageList(deps.browser);
+  const preActionPageIds = new Set(parseTabInventory(preActionPageListText).map((tab) => tab.index));
 
-  if (input.preselectBoundTab !== false) {
-    await selectCapturedPage(deps.browser, binding.browserTabIndex);
-  }
+  await deps.browser.callBrowserTool(input.toolName, {
+    ...input.toolArgs,
+    pageId: target.browserTabIndex,
+  });
 
-  await deps.browser.callBrowserTool(input.toolName, input.toolArgs);
-
-  const snapshotText = await deps.browser.captureSnapshot();
-  const capturedTabs = parseTabInventory(snapshotText);
-  const { snapshotPath } = await deps.snapshots.write(snapshotText);
-  const page = pageIdentityFromSnapshotText(snapshotText);
+  const postActionPageListText = await readBrowserPageList(deps.browser, preActionPageListText);
+  const liveTabs = parseTabInventory(postActionPageListText);
   const browserTabIndex = await resolveCapturedBrowserTabIndex(
     deps,
-    capturedTabs,
-    input.nextBrowserTabIndex ?? binding.browserTabIndex,
+    liveTabs,
+    input.nextBrowserTabIndex ?? target.browserTabIndex,
   );
+  const selectedPageListText = await selectCapturedPage(deps.browser, browserTabIndex);
+  const rawSnapshotText = await deps.browser.captureSnapshot();
+  const snapshotText = normalizeCapturedSnapshot(selectedPageListText, rawSnapshotText, browserTabIndex);
+  const { snapshotPath } = await deps.snapshots.write(snapshotText);
+  const page = pageIdentityFromSnapshotText(snapshotText);
 
   await deps.workspaceBindings.write({
-    ...binding,
+    workspaceRef,
     browserTabIndex,
     snapshotPath,
     page,
   });
 
-  const workspaceState = resolveWorkspaceState(deps);
   const workspaceStateResult = await resolveWorkspaceReconciler(workspaceState).reconcileWorkspace({
     workspaceRef,
     browserTabIndex,
     page,
     snapshotPath,
+    workspaceTabRef: browserTabIndex === target.browserTabIndex ? target.workspaceTabRef : undefined,
+  });
+  await syncWorkspaceTabInventory({
+    workspaceRef,
+    workspaceState,
+    liveTabs,
+    preActionPageIds,
+    activeWorkspaceTabRef: workspaceStateResult.workspace.activeWorkspaceTabRef,
+    activeBrowserTabIndex: browserTabIndex,
+    activePage: page,
+    activeSnapshotPath: snapshotPath,
   });
 
   const knowledgeHits = await readKnowledgeHits(deps, page.origin, page.normalizedPath);
@@ -148,6 +174,7 @@ export async function runWorkspaceAction(input, deps) {
     ok: true,
     action: input.action,
     workspaceRef,
+    workspaceTabRef: workspaceStateResult.workspace.activeWorkspaceTabRef,
     page,
     snapshotPath,
     knowledgeHits,
@@ -283,52 +310,69 @@ async function resolveWorkspaceTarget(
   args,
   deps,
   providedWorkspaceRef,
+  existingWorkspaceTarget,
 ) {
   if (typeof args.pageId === "number") {
     if (!Number.isInteger(args.pageId) || args.pageId < 0) {
       throw new Error("pageId must be a non-negative integer");
     }
+    const pageListText = await selectCapturedPage(deps.browser, args.pageId);
     return {
-      pageId: args.pageId,
-      pageListText: await selectCapturedPage(deps.browser, args.pageId),
+      pageId: await resolveCapturedBrowserTabIndex(deps, parseTabInventory(pageListText), args.pageId),
+      pageListText,
       createdWorkspaceTab: false,
       reusedBinding: false,
     };
   }
 
-  if (providedWorkspaceRef) {
-    const bindingExists = await deps.workspaceBindings.exists(providedWorkspaceRef);
-    if (bindingExists) {
-      const existingBinding = await deps.workspaceBindings.read(providedWorkspaceRef);
-      try {
-        return {
-          pageId: existingBinding.browserTabIndex,
-          pageListText: await selectCapturedPage(deps.browser, existingBinding.browserTabIndex),
-          createdWorkspaceTab: false,
-          reusedBinding: true,
-        };
-      } catch (error) {
-        if (!isMissingCapturedPageError(error)) {
-          throw error;
-        }
+  if (providedWorkspaceRef && existingWorkspaceTarget?.workspaceTab) {
+    try {
+      const expectedPageId = existingWorkspaceTarget.workspaceTab.browserTabIndex;
+      const pageListText = await selectCapturedPage(deps.browser, expectedPageId);
+      const resolvedPageId = await resolveCapturedBrowserTabIndex(
+        deps,
+        parseTabInventory(pageListText),
+        expectedPageId,
+      );
+      if (resolvedPageId !== expectedPageId) {
+        throw new Error(
+          `workspace active browser tab ${expectedPageId} is no longer available in the live browser inventory`,
+        );
       }
-
-      const reboundWorkspaceTab = await deps.browser.openWorkspaceTab();
       return {
-        pageId: reboundWorkspaceTab.pageId,
-        pageListText: reboundWorkspaceTab.pageListText,
-        createdWorkspaceTab: true,
-        reusedBinding: false,
+        pageId: resolvedPageId,
+        pageListText,
+        createdWorkspaceTab: false,
+        reusedBinding: true,
+        workspaceTabRef: existingWorkspaceTarget.workspaceTab.workspaceTabRef,
       };
+    } catch (error) {
+      if (!isMissingCapturedPageError(error)) {
+        throw error;
+      }
     }
+
+    const reboundWorkspaceTab = await deps.browser.openWorkspaceTab();
+    return {
+      pageId: await resolveCapturedBrowserTabIndex(
+        deps,
+        parseTabInventory(reboundWorkspaceTab.pageListText),
+        reboundWorkspaceTab.pageId,
+      ),
+      pageListText: reboundWorkspaceTab.pageListText,
+      createdWorkspaceTab: true,
+      reusedBinding: false,
+      workspaceTabRef: existingWorkspaceTarget.workspaceTab?.workspaceTabRef,
+    };
   }
 
   const workspaceTab = await deps.browser.openWorkspaceTab();
   return {
-    pageId: workspaceTab.pageId,
+    pageId: await resolveCapturedBrowserTabIndex(deps, parseTabInventory(workspaceTab.pageListText), workspaceTab.pageId),
     pageListText: workspaceTab.pageListText,
     createdWorkspaceTab: true,
     reusedBinding: false,
+    workspaceTabRef: undefined,
   };
 }
 
@@ -345,15 +389,130 @@ async function readKnowledgeHits(deps, origin, normalizedPath) {
   }));
 }
 
-async function readWorkspaceBinding(workspaceBindings, workspaceRef) {
+async function readWorkspaceRecord(workspaceState, workspaceRef) {
   try {
-    return await workspaceBindings.read(workspaceRef);
+    return await workspaceState.readWorkspace(workspaceRef);
   } catch (error) {
     if (isMissingFileError(error)) {
-      throw new Error(`Workspace ${workspaceRef} is not available; create a new workspace with POST /workspaces.`);
+      return undefined;
     }
     throw error;
   }
+}
+
+async function readWorkspaceActiveTarget(workspaceState, workspaceRef) {
+  const workspace = await readWorkspaceRecord(workspaceState, workspaceRef);
+  if (!workspace) {
+    return undefined;
+  }
+
+  try {
+    const workspaceTab = await workspaceState.readWorkspaceTab(workspaceRef, workspace.activeWorkspaceTabRef);
+    return {
+      workspace,
+      workspaceTab,
+    };
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return {
+        workspace,
+        workspaceTab: undefined,
+      };
+    }
+    throw error;
+  }
+}
+
+async function readWorkspaceTargetForOpen(workspaceState, workspaceRef, workspaceTabRef) {
+  if (workspaceTabRef === undefined) {
+    return readWorkspaceActiveTarget(workspaceState, workspaceRef);
+  }
+
+  const workspace = await readWorkspaceRecord(workspaceState, workspaceRef);
+  if (!workspace) {
+    throw new Error(`Workspace ${workspaceRef} is not available; create a new workspace with POST /workspaces.`);
+  }
+
+  try {
+    const workspaceTab = await workspaceState.readWorkspaceTab(workspaceRef, workspaceTabRef);
+    return {
+      workspace,
+      workspaceTab,
+    };
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return {
+        workspace,
+        workspaceTab: {
+          workspaceRef,
+          workspaceTabRef,
+          browserTabIndex: workspace.browserTabIndex,
+          page: workspace.page,
+          snapshotPath: workspace.snapshotPath,
+        },
+      };
+    }
+    throw error;
+  }
+}
+
+async function resolveActionWorkspaceTarget(input, workspaceState, workspaceRef) {
+  if (typeof input.toolArgs?.pageId === "number") {
+    return {
+      browserTabIndex: input.toolArgs.pageId,
+      workspaceTabRef: input.workspaceTabRef,
+    };
+  }
+
+  if (input.workspaceTabRef !== undefined) {
+    try {
+      const workspaceTab = await workspaceState.readWorkspaceTab(workspaceRef, input.workspaceTabRef);
+      return {
+        browserTabIndex: workspaceTab.browserTabIndex,
+        workspaceTabRef: workspaceTab.workspaceTabRef,
+      };
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        throw new Error(`workspaceTabRef ${input.workspaceTabRef} is not available in workspace ${workspaceRef}; call GET /tabs?workspaceRef=${workspaceRef} to refresh the workspace tab list.`);
+      }
+      throw error;
+    }
+  }
+
+  const activeTarget = await readWorkspaceActiveTarget(workspaceState, workspaceRef);
+  if (!activeTarget?.workspace) {
+    throw new Error(`Workspace ${workspaceRef} is not available; create a new workspace with POST /workspaces.`);
+  }
+  if (!activeTarget.workspaceTab) {
+    throw new Error(
+      `Workspace ${workspaceRef} has no live active workspace tab; refresh it with POST /workspaces?workspaceRef=${workspaceRef}.`,
+    );
+  }
+
+  return {
+    browserTabIndex: activeTarget.workspaceTab.browserTabIndex,
+    workspaceTabRef: activeTarget.workspaceTab.workspaceTabRef,
+  };
+}
+
+async function readBrowserPageList(browser, fallbackPageListText) {
+  if (typeof browser.listPages === "function") {
+    return browser.listPages();
+  }
+
+  if (typeof browser.callBrowserTool === "function") {
+    const result = await browser.callBrowserTool("list_pages", {});
+    const text = readToolText(result);
+    if (text) {
+      return text;
+    }
+  }
+
+  if (fallbackPageListText) {
+    return fallbackPageListText;
+  }
+
+  throw new Error("browser runtime cannot list pages");
 }
 
 function mintWorkspaceRef() {
@@ -374,6 +533,46 @@ async function resolveCapturedBrowserTabIndex(
     return await deps.browser.readActiveTabIndex();
   } catch {
     return fallbackIndex;
+  }
+}
+
+async function syncWorkspaceTabInventory(input) {
+  const timestamp = new Date().toISOString();
+  const existingWorkspaceTabs = await input.workspaceState.listWorkspaceTabs(input.workspaceRef);
+  const existingByIndex = new Map(existingWorkspaceTabs.map((tab) => [tab.browserTabIndex, tab]));
+  const adoptedTabIndexes = new Set([
+    ...existingWorkspaceTabs.map((tab) => tab.browserTabIndex),
+    input.activeBrowserTabIndex,
+    ...input.liveTabs
+      .filter((tab) => !input.preActionPageIds.has(tab.index))
+      .map((tab) => tab.index),
+  ]);
+
+  for (const liveTab of input.liveTabs) {
+    if (!adoptedTabIndexes.has(liveTab.index)) {
+      continue;
+    }
+
+    const existing = existingByIndex.get(liveTab.index);
+    const workspaceTabRef = liveTab.index === input.activeBrowserTabIndex
+      ? input.activeWorkspaceTabRef
+      : existing?.workspaceTabRef ?? `workspace_tab_${randomUUID()}`;
+    const page = liveTab.index === input.activeBrowserTabIndex
+      ? input.activePage
+      : pageIdentityFromUrl(liveTab.url, liveTab.title);
+    const snapshotPath = liveTab.index === input.activeBrowserTabIndex
+      ? input.activeSnapshotPath
+      : existing?.snapshotPath ?? input.activeSnapshotPath;
+
+    await input.workspaceState.writeWorkspaceTab({
+      workspaceRef: input.workspaceRef,
+      workspaceTabRef,
+      browserTabIndex: liveTab.index,
+      page,
+      snapshotPath,
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp,
+    });
   }
 }
 

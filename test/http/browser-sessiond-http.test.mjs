@@ -85,6 +85,81 @@ function createFakeBrowserBridge() {
   };
 }
 
+function createPopupOpeningBrowserBridge() {
+  const calls = [];
+  const state = {
+    tabs: [
+      {
+        index: 1,
+        title: "Inbox",
+        url: "https://example.com/inbox",
+        active: true,
+      },
+    ],
+  };
+
+  return {
+    calls,
+    async listPages() {
+      return renderPageList(state.tabs);
+    },
+    async newPage(url) {
+      state.tabs = [
+        {
+          index: 1,
+          title: "Workspace",
+          url,
+          active: true,
+        },
+      ];
+      return renderPageList(state.tabs);
+    },
+    async captureSnapshot() {
+      const active = state.tabs.find((tab) => tab.active) ?? state.tabs[0];
+      return [
+        "## Latest page snapshot",
+        `uid=root RootWebArea "${active.title}" url="${active.url}"`,
+        `- heading "${active.title}" [uid=page_heading]`,
+      ].join("\n");
+    },
+    async callTool(name, args) {
+      calls.push({ name, args });
+
+      if (name === "select_page") {
+        state.tabs = state.tabs.map((tab) => ({
+          ...tab,
+          active: tab.index === args.pageId,
+        }));
+        return { content: [{ type: "text", text: renderPageList(state.tabs) }] };
+      }
+
+      if (name === "click") {
+        state.tabs = [
+          {
+            index: 1,
+            title: "Inbox",
+            url: "https://example.com/inbox",
+            active: false,
+          },
+          {
+            index: 2,
+            title: "Conversation",
+            url: "https://example.com/conversation/42",
+            active: true,
+          },
+        ];
+        return { content: [{ type: "text", text: "click complete" }] };
+      }
+
+      if (name === "list_pages") {
+        return { content: [{ type: "text", text: renderPageList(state.tabs) }] };
+      }
+
+      throw new Error(`unexpected browser tool ${name}`);
+    },
+  };
+}
+
 function renderPageList(tabs) {
   return [
     "## Pages",
@@ -244,6 +319,204 @@ test("browser-sessiond query full only returns workspace-local open tabs in the 
     assert.match(fullQuery.snapshotText, /### Open tabs/);
     assert.match(fullQuery.snapshotText, /Workspace/);
     assert.doesNotMatch(fullQuery.snapshotText, /Details/);
+  } finally {
+    await daemon.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("browser-sessiond click adopts a newly focused tab into the workspace and returns the live active tab to the agent", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const bridge = createPopupOpeningBrowserBridge();
+  const { daemon, metadata } = await startBrowserSessionDaemon({
+    sessionRoot: path.join(root, "session"),
+    port: 0,
+    runtimeVersion: "test-http",
+    runtimeRoots: createIsolatedRuntimeRoots(root),
+    createBrowserBridge: async () => bridge,
+  });
+
+  try {
+    const workspace = await requestJson("POST", `${metadata.baseUrl}/workspaces`, {});
+    const click = await requestJson(
+      "POST",
+      `${metadata.baseUrl}/click?workspaceRef=${workspace.workspaceRef}`,
+      {
+        uid: "page_heading",
+      },
+    );
+    const tabs = await requestJson("GET", `${metadata.baseUrl}/tabs?workspaceRef=${workspace.workspaceRef}`);
+
+    assert.equal(click.ok, true);
+    assert.equal(click.workspaceRef, workspace.workspaceRef);
+    assert.equal(click.page.normalizedPath, "/conversation/42");
+    assert.equal(click.page.title, "Conversation");
+    assert.match(click.workspaceTabRef, /^workspace_tab_[0-9a-f-]+$/i);
+    assert.equal(Array.isArray(click.tabs), true);
+    assert.equal(click.tabs.length, 2);
+    assert.equal(click.tabs.some((tab) => tab.title === "Inbox"), true);
+    assert.equal(click.tabs.some((tab) => tab.title === "Conversation" && tab.active), true);
+
+    const originalTabRef = workspace.tabs.find((tab) => tab.active)?.workspaceTabRef;
+    assert.notEqual(click.workspaceTabRef, originalTabRef);
+
+    assert.equal(tabs.tabs.length, 2);
+    assert.equal(
+      tabs.tabs.some((tab) => tab.workspaceTabRef === click.workspaceTabRef && tab.title === "Conversation" && tab.active),
+      true,
+    );
+    assert.equal(
+      tabs.tabs.some((tab) => tab.workspaceTabRef === originalTabRef && tab.title === "Inbox"),
+      true,
+    );
+  } finally {
+    await daemon.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("browser-sessiond click resolves workspace B from workspace.activeWorkspaceTabRef even after workspace A already targeted the daemon", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const bridge = createFakeBrowserBridge();
+  const { daemon, metadata } = await startBrowserSessionDaemon({
+    sessionRoot: path.join(root, "session"),
+    port: 0,
+    runtimeVersion: "test-http",
+    runtimeRoots: createIsolatedRuntimeRoots(root),
+    createBrowserBridge: async () => bridge,
+  });
+
+  try {
+    const workspaceA = await requestJson("POST", `${metadata.baseUrl}/workspaces`, {});
+    const workspaceB = await requestJson("POST", `${metadata.baseUrl}/workspaces`, {});
+    const seededTabsA = daemon.workspaceTabRefs.materializeTabs(workspaceA.workspaceRef, [
+      {
+        index: 1,
+        title: "Inbox A",
+        url: "https://example.com/inbox-a",
+        active: true,
+      },
+      {
+        index: 2,
+        title: "Details A",
+        url: "https://example.com/details-a",
+        active: false,
+      },
+    ]);
+    const seededTabsB = daemon.workspaceTabRefs.materializeTabs(workspaceB.workspaceRef, [
+      {
+        index: 1,
+        title: "Inbox B",
+        url: "https://example.com/inbox-b",
+        active: false,
+      },
+      {
+        index: 2,
+        title: "Details B",
+        url: "https://example.com/details-b",
+        active: true,
+      },
+    ]);
+    const detailsTabB = seededTabsB[1];
+
+    await daemon.workspaceBindings.write({
+      workspaceRef: workspaceA.workspaceRef,
+      browserTabIndex: 1,
+      snapshotPath: "/tmp/inbox-a.md",
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/inbox-a",
+        title: "Inbox A",
+      },
+    });
+    await daemon.workspaceState.writeWorkspace({
+      workspaceRef: workspaceA.workspaceRef,
+      activeWorkspaceTabRef: seededTabsA[0].workspaceTabRef,
+      browserTabIndex: 1,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/inbox-a",
+        title: "Inbox A",
+      },
+      snapshotPath: "/tmp/inbox-a.md",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
+    });
+    await daemon.workspaceState.writeWorkspaceTab({
+      workspaceRef: workspaceA.workspaceRef,
+      workspaceTabRef: seededTabsA[0].workspaceTabRef,
+      browserTabIndex: 1,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/inbox-a",
+        title: "Inbox A",
+      },
+      snapshotPath: "/tmp/inbox-a.md",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
+    });
+
+    await daemon.workspaceBindings.write({
+      workspaceRef: workspaceB.workspaceRef,
+      browserTabIndex: 2,
+      snapshotPath: "/tmp/details-b.md",
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/details-b",
+        title: "Details B",
+      },
+    });
+    await daemon.workspaceState.writeWorkspace({
+      workspaceRef: workspaceB.workspaceRef,
+      activeWorkspaceTabRef: detailsTabB.workspaceTabRef,
+      browserTabIndex: 2,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/details-b",
+        title: "Details B",
+      },
+      snapshotPath: "/tmp/details-b.md",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
+    });
+    await daemon.workspaceState.writeWorkspaceTab({
+      workspaceRef: workspaceB.workspaceRef,
+      workspaceTabRef: detailsTabB.workspaceTabRef,
+      browserTabIndex: 2,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/details-b",
+        title: "Details B",
+      },
+      snapshotPath: "/tmp/details-b.md",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
+    });
+
+    const firstClick = await requestJson(
+      "POST",
+      `${metadata.baseUrl}/click?workspaceRef=${workspaceA.workspaceRef}`,
+      {
+        uid: "submit_button",
+      },
+    );
+    const secondClick = await requestJson(
+      "POST",
+      `${metadata.baseUrl}/click?workspaceRef=${workspaceB.workspaceRef}`,
+      {
+        uid: "submit_button",
+      },
+    );
+
+    assert.equal(firstClick.ok, true);
+    assert.equal(secondClick.ok, true);
+    assert.equal(firstClick.workspaceRef, workspaceA.workspaceRef);
+    assert.equal(secondClick.workspaceRef, workspaceB.workspaceRef);
+    assert.equal(secondClick.workspaceTabRef, detailsTabB.workspaceTabRef);
+    assert.equal(
+      secondClick.tabs.some((tab) => tab.workspaceTabRef === detailsTabB.workspaceTabRef && tab.active),
+      true,
+    );
   } finally {
     await daemon.stop();
     await rm(root, { recursive: true, force: true });

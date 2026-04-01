@@ -17,10 +17,11 @@ export class WorkspaceReconciler {
     const workspace = await this.readWorkspaceOrUndefined(input.workspaceRef);
     const workspaceTabs = await this.store.listWorkspaceTabs(input.workspaceRef);
     const matchingWorkspaceTab = workspaceTabs.find((tab) => tab.browserTabIndex === input.browserTabIndex);
-    const activeWorkspaceTabRef = input.workspaceTabRef
-      ?? matchingWorkspaceTab?.workspaceTabRef
-      ?? workspace?.activeWorkspaceTabRef
-      ?? mintWorkspaceTabRef();
+    const requestedWorkspaceTab = input.workspaceTabRef
+      ? workspaceTabs.find((tab) => tab.workspaceTabRef === input.workspaceTabRef)
+      : undefined;
+    const persistedWorkspaceTabRecord = requestedWorkspaceTab ?? matchingWorkspaceTab;
+    const activeWorkspaceTabRef = persistedWorkspaceTabRecord?.workspaceTabRef ?? mintWorkspaceTabRef();
 
     const persistedWorkspace = {
       workspaceRef: input.workspaceRef,
@@ -38,8 +39,7 @@ export class WorkspaceReconciler {
       page: clonePageIdentity(input.page),
       snapshotPath: input.snapshotPath,
       createdAt:
-        workspaceTabs.find((tab) => tab.workspaceTabRef === activeWorkspaceTabRef)?.createdAt
-        ?? timestamp,
+        persistedWorkspaceTabRecord?.createdAt ?? timestamp,
       updatedAt: timestamp,
     };
 

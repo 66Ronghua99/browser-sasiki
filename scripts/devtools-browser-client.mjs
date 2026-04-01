@@ -13,12 +13,11 @@ export class DevtoolsBrowserClient {
   constructor(browser, options = {}) {
     this.browser = browser;
     this.workspaceTabUrl = options.workspaceTabUrl ?? DEFAULT_WORKSPACE_TAB_URL;
-    this.selectedPageId = options.selectedPageId ?? 0;
     this.snapshotHandlesByPage = new Map();
   }
 
   async captureSnapshot() {
-    const page = await this.resolvePage({ pageId: this.selectedPageId, allowFirstPageFallback: true });
+    const page = await this.resolvePage({ allowFirstPageFallback: true });
     const pageId = this.findPageId(page);
     const snapshot = await this.captureAccessibilitySnapshot(page, pageId);
     this.snapshotHandlesByPage.set(pageId, snapshot.handles);
@@ -26,7 +25,7 @@ export class DevtoolsBrowserClient {
   }
 
   async listPages() {
-    return formatPageInventory(await this.listLivePages(), this.selectedPageId);
+    return formatPageInventory(await this.listLivePages());
   }
 
   async listLivePages() {
@@ -67,7 +66,6 @@ export class DevtoolsBrowserClient {
     }
 
     const pageId = this.findPageId(page);
-    this.selectedPageId = pageId;
 
     if (options.bringToFront === true) {
       await page.bringToFront?.();
@@ -89,13 +87,12 @@ export class DevtoolsBrowserClient {
 
   async selectPage(pageId, bringToFront = true) {
     const page = await this.resolvePage({ pageId });
-    this.selectedPageId = pageId;
 
     if (bringToFront) {
       await page.bringToFront?.();
     }
 
-    return formatPageInventory(await this.listLivePages(), pageId);
+    return formatPageInventory(await this.listLivePages());
   }
 
   async click(input) {
@@ -133,33 +130,46 @@ export class DevtoolsBrowserClient {
       case "select_page":
         return textResult(await this.selectPage(requirePageId(args.pageId), args.bringToFront !== false));
       case "navigate_page": {
-        const page = await this.resolvePage({ pageId: this.selectedPageId, allowFirstPageFallback: true });
+        const page = await this.resolvePage({ pageId: requirePageId(args.pageId) });
         const url = normalizeNavigateUrl(args);
         await page.goto(url);
         return textResult(`navigated:${url}`);
       }
       case "click": {
         const actionInput = resolveActionTargetInput(args);
-        await this.click({
-          pageId: this.selectedPageId,
-          ...actionInput,
-        });
+        await this.click(args.pageId !== undefined
+          ? {
+            pageId: requirePageId(args.pageId),
+            ...actionInput,
+          }
+          : actionInput);
         return textResult(`clicked:${describeActionTarget(actionInput)}`);
       }
       case "fill": {
         const actionInput = resolveActionTargetInput(args);
-        await this.fill({
-          pageId: this.selectedPageId,
-          ...actionInput,
-          value: args.value,
-        });
+        await this.fill(args.pageId !== undefined
+          ? {
+            pageId: requirePageId(args.pageId),
+            ...actionInput,
+            value: args.value,
+          }
+          : {
+            ...actionInput,
+            value: args.value,
+          });
         return textResult(`filled:${describeActionTarget(actionInput)}`);
       }
       case "press_key":
-        await this.press({
-          pageId: this.selectedPageId,
-          key: args.key,
-        });
+        await this.press(
+          args.pageId !== undefined
+            ? {
+              pageId: requirePageId(args.pageId),
+              key: args.key,
+            }
+            : {
+              key: args.key,
+            },
+        );
         return textResult(`pressed:${args.key}`);
       default:
         throw new Error(`Unsupported browser tool: ${name}`);
@@ -187,10 +197,16 @@ export class DevtoolsBrowserClient {
   }
 
   async resolveDomActionPage(input) {
-    return this.resolvePage({
-      pageId: input.pageId ?? this.selectedPageId,
-      allowFirstPageFallback: true,
-    });
+    if (Number.isInteger(input.pageId) && input.pageId >= 0) {
+      return this.resolvePage({ pageId: input.pageId });
+    }
+
+    if (typeof input.uid === "string" && input.uid.trim().length > 0) {
+      const pageId = this.findPageIdForSnapshotHandle(input.uid);
+      return this.resolvePage({ pageId });
+    }
+
+    throw new Error("pageId is required when resolving selector-based browser actions");
   }
 
   async resolvePage({ pageId, allowFirstPageFallback = false }) {
@@ -205,7 +221,6 @@ export class DevtoolsBrowserClient {
     }
 
     if (allowFirstPageFallback && pages[0]) {
-      this.selectedPageId = 0;
       return pages[0];
     }
 
@@ -284,6 +299,16 @@ export class DevtoolsBrowserClient {
       throw new Error(`No live snapshot handle exists for uid ${uid}; re-run /query on the current workspace page.`);
     }
     return handle;
+  }
+
+  findPageIdForSnapshotHandle(uid) {
+    for (const [pageId, handles] of this.snapshotHandlesByPage.entries()) {
+      if (handles?.has(uid)) {
+        return pageId;
+      }
+    }
+
+    throw new Error(`No live snapshot handle exists for uid ${uid}; re-run /query on the current workspace page.`);
   }
 
   async callNodeFunction(page, backendDOMNodeId, functionDeclaration, argumentsList = []) {
@@ -408,12 +433,10 @@ function readPageUrl(page) {
   return typeof url === "string" && url.trim().length > 0 ? url : "about:blank";
 }
 
-function formatPageInventory(pages, selectedPageId) {
+function formatPageInventory(pages) {
   const lines = ["## Pages"];
   for (const page of pages) {
-    lines.push(
-      `- ${page.pageId} [${escapeMarkdownLabel(page.title)}](${page.url})${page.pageId === selectedPageId ? " (current)" : ""}`,
-    );
+    lines.push(`- ${page.pageId} [${escapeMarkdownLabel(page.title)}](${page.url})`);
   }
   return lines.join("\n");
 }

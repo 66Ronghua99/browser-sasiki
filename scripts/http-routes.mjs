@@ -205,7 +205,11 @@ function translateHttpResultFromDaemon(endpoint, result, requestBody) {
       return {
         ...result,
         workspaceRef: requestBody.workspaceRef,
-        ...(requestBody.workspaceTabRef !== undefined ? { workspaceTabRef: requestBody.workspaceTabRef } : {}),
+        ...(result.workspaceTabRef !== undefined
+          ? {}
+          : requestBody.workspaceTabRef !== undefined
+            ? { workspaceTabRef: requestBody.workspaceTabRef }
+            : {}),
       };
     default:
       return result;

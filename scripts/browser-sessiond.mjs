@@ -59,6 +59,12 @@ class WorkspaceTabRefStore {
     return pageId;
   }
 
+  rememberWorkspaceTab(workspaceRef, workspaceTabRef, pageId) {
+    const workspace = this.ensureWorkspace(workspaceRef);
+    workspace.byPageId.set(pageId, workspaceTabRef);
+    workspace.byWorkspaceTabRef.set(workspaceTabRef, pageId);
+  }
+
   ensureWorkspace(workspaceRef) {
     const existing = this.workspaces.get(workspaceRef);
     if (existing) {
@@ -288,6 +294,7 @@ export class BrowserSessionDaemon {
 
   createBrowserRuntime() {
     return {
+      listPages: async () => (await this.ensureBrowserBridge()).listPages(),
       captureSnapshot: async () => (await this.ensureBrowserBridge()).captureSnapshot(),
       callBrowserTool: async (name, args) => (await this.ensureBrowserBridge()).callTool(name, args),
       readActiveTabIndex: async () => {
@@ -299,7 +306,12 @@ export class BrowserSessionDaemon {
         return activeTab.index;
       },
       openWorkspaceTab: async () => {
-        const pageListText = await (await this.ensureBrowserBridge()).newPage(DEFAULT_WORKSPACE_TAB_URL);
+        const bridge = await this.ensureBrowserBridge();
+        if (typeof bridge.openWorkspaceTab === "function") {
+          return normalizeOpenedWorkspaceTab(await bridge.openWorkspaceTab(DEFAULT_WORKSPACE_TAB_URL));
+        }
+
+        const pageListText = await bridge.newPage(DEFAULT_WORKSPACE_TAB_URL);
         const activeTab = parseTabInventory(pageListText).find((tab) => tab.active);
         if (activeTab) {
           return {
@@ -503,6 +515,15 @@ export class BrowserSessionDaemon {
       onDisconnect: connected.onDisconnect,
       close: connected.close,
       listPages: async () => connected.client.listPages(),
+      openWorkspaceTab: async (url) => {
+        const page = await connected.client.openWorkspaceTab(url ?? DEFAULT_WORKSPACE_TAB_URL, {
+          bringToFront: true,
+        });
+        return {
+          pageId: page.pageId,
+          pageListText: await connected.client.listPages(),
+        };
+      },
       newPage: async (url, background) => connected.client.newPage(url, background),
       captureSnapshot: async () => runtime.captureSnapshot(),
       callTool: async (name, args) => runtime.callBrowserTool(name, args),
@@ -534,11 +555,13 @@ export class BrowserSessionDaemon {
     };
   }
 
-  toPublicActionResult(result) {
+  async toPublicActionResult(result) {
+    const tabs = await this.listWorkspaceTabs(result.workspaceRef);
     return {
       ok: true,
       snapshotRef: snapshotRefFromPath(result.snapshotPath),
       ...result,
+      tabs,
       action: result.action,
     };
   }
@@ -550,6 +573,13 @@ export class BrowserSessionDaemon {
   async listWorkspaceTabs(workspaceRef) {
     const workspace = await this.workspaceState.readWorkspace(workspaceRef);
     const workspaceTabs = await this.workspaceState.listWorkspaceTabs(workspaceRef);
+    for (const workspaceTab of workspaceTabs) {
+      this.workspaceTabRefs.rememberWorkspaceTab(
+        workspaceRef,
+        workspaceTab.workspaceTabRef,
+        workspaceTab.browserTabIndex,
+      );
+    }
     return workspaceTabs.map((workspaceTab) => ({
       workspaceTabRef: workspaceTab.workspaceTabRef,
       title: workspaceTab.page.title,
@@ -704,6 +734,23 @@ function formatOpenTabsSection(tabs) {
     "### Open tabs",
     ...tabs.map((tab, index) => `- ${index}: ${tab.active ? "(current) " : ""}[${tab.title}](${tab.url})`),
   ];
+}
+
+function normalizeOpenedWorkspaceTab(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("browser bridge openWorkspaceTab() must return an object");
+  }
+  if (!Number.isInteger(value.pageId) || value.pageId < 0) {
+    throw new TypeError("browser bridge openWorkspaceTab() must return a non-negative integer pageId");
+  }
+  if (typeof value.pageListText !== "string" || value.pageListText.length === 0) {
+    throw new TypeError("browser bridge openWorkspaceTab() must return a non-empty pageListText");
+  }
+
+  return {
+    pageId: value.pageId,
+    pageListText: value.pageListText,
+  };
 }
 
 export function isDirectRunEntry(importMetaUrl, argv1 = process.argv[1]) {

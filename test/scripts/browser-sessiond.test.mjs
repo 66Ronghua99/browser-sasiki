@@ -37,6 +37,20 @@ function createDisconnectableBrowserBridge() {
   };
 }
 
+function createDirectOpenWorkspaceBridge() {
+  return {
+    listPages: async () => "## Pages\n- 1 [Workspace](chrome://newtab/)",
+    newPage: async () => "## Pages\n- 1 [Workspace](chrome://newtab/)",
+    openWorkspaceTab: async () => ({
+      pageId: 1,
+      pageListText: "## Pages\n- 1 [Workspace](chrome://newtab/)",
+    }),
+    captureSnapshot: async () => "uid=root RootWebArea \"Workspace\" url=\"chrome://newtab/\"",
+    callTool: async () => ({ content: [{ type: "text", text: "ok" }] }),
+    close: async () => {},
+  };
+}
+
 test("browser-sessiond treats symlinked script paths as direct-run entry", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-entry-"));
   const realEntryPath = fileURLToPath(new URL("../../scripts/browser-sessiond.mjs", import.meta.url));
@@ -136,6 +150,29 @@ test("browser-sessiond stops serving health after the browser bridge disconnects
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     await assert.rejects(() => requestJson("GET", `${metadata.baseUrl}/health`));
+  } finally {
+    await daemon.stop().catch(() => {});
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("browser-sessiond opens a workspace from a bridge-provided pageId even when new_page output lacks an active marker", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const { daemon, metadata } = await startBrowserSessionDaemon({
+    sessionRoot: path.join(root, "session"),
+    port: 0,
+    runtimeVersion: "test-http",
+    createBrowserBridge: async () => createDirectOpenWorkspaceBridge(),
+  });
+
+  try {
+    const workspace = await requestJson("POST", `${metadata.baseUrl}/workspaces`, {});
+
+    assert.equal(workspace.ok, true);
+    assert.equal(typeof workspace.workspaceRef, "string");
+    assert.equal(Array.isArray(workspace.tabs), true);
+    assert.equal(workspace.tabs[0]?.active, true);
+    assert.equal(workspace.tabs[0]?.title, "Workspace");
   } finally {
     await daemon.stop().catch(() => {});
     await rm(root, { recursive: true, force: true });
