@@ -84,7 +84,7 @@ function createFakeBrowserBridge() {
 
       if (name === "navigate_page") {
         state.tabs = state.tabs.map((tab) =>
-          tab.active
+          (Number.isInteger(args.pageId) ? tab.index === args.pageId : tab.active)
             ? {
                 ...tab,
                 url: args.url,
@@ -96,6 +96,12 @@ function createFakeBrowserBridge() {
       }
 
       if (name === "click" || name === "fill" || name === "press_key") {
+        if (Number.isInteger(args.pageId)) {
+          state.tabs = state.tabs.map((tab) => ({
+            ...tab,
+            active: tab.index === args.pageId,
+          }));
+        }
         return { content: [{ type: "text", text: `${name} complete` }] };
       }
 
@@ -193,6 +199,98 @@ function createPopupOpeningBrowserBridge() {
 
       if (name === "list_pages") {
         return { content: [{ type: "text", text: renderPageList(state.tabs) }] };
+      }
+
+      throw new Error(`unexpected browser tool ${name}`);
+    },
+  };
+}
+
+function createActivePopupWithoutOpenerBrowserBridge() {
+  const calls = [];
+  const state = {
+    tabs: [
+      {
+        index: 1,
+        targetId: "target-inbox",
+        openerId: "",
+        title: "Inbox",
+        url: "https://example.com/inbox",
+        active: true,
+      },
+    ],
+  };
+
+  return {
+    calls,
+    async listPages() {
+      return renderPageList(state.tabs);
+    },
+    async listLivePageInventory() {
+      return state.tabs.map((tab) => ({
+        pageId: tab.index,
+        targetId: tab.targetId,
+        openerId: tab.openerId,
+        url: tab.url,
+        title: tab.title,
+      }));
+    },
+    async newPage(url) {
+      state.tabs = [
+        {
+          index: 1,
+          targetId: "target-workspace",
+          openerId: "",
+          title: "Workspace",
+          url,
+          active: true,
+        },
+      ];
+      return renderPageList(state.tabs);
+    },
+    async captureSnapshot() {
+      const active = state.tabs.find((tab) => tab.active) ?? state.tabs[0];
+      return this.captureSnapshotForPage(active?.index ?? state.tabs[0]?.index ?? 0);
+    },
+    async captureSnapshotForPage(pageId) {
+      const active = state.tabs.find((tab) => tab.index === pageId) ?? state.tabs[0];
+      return [
+        "## Latest page snapshot",
+        `uid=root RootWebArea "${active.title}" url="${active.url}"`,
+        `- heading "${active.title}" [uid=page_heading]`,
+      ].join("\n");
+    },
+    async callTool(name, args) {
+      calls.push({ name, args });
+
+      if (name === "select_page") {
+        state.tabs = state.tabs.map((tab) => ({
+          ...tab,
+          active: tab.index === args.pageId,
+        }));
+        return { content: [{ type: "text", text: renderPageList(state.tabs) }] };
+      }
+
+      if (name === "click") {
+        state.tabs = [
+          {
+            index: 1,
+            targetId: "target-workspace",
+            openerId: "",
+            title: "Inbox",
+            url: "https://example.com/inbox",
+            active: false,
+          },
+          {
+            index: 2,
+            targetId: "target-conversation",
+            openerId: "",
+            title: "Conversation",
+            url: "https://example.com/conversation/42",
+            active: true,
+          },
+        ];
+        return { content: [{ type: "text", text: "click complete" }] };
       }
 
       throw new Error(`unexpected browser tool ${name}`);
@@ -335,6 +433,32 @@ test("browser-sessiond bridges workspace-first listing and tab-selection HTTP on
   }
 });
 
+test("browser-sessiond GET /tabs fails explicitly for an unknown workspaceRef", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const bridge = createFakeBrowserBridge();
+  const { daemon, metadata } = await startBrowserSessionDaemon({
+    sessionRoot: path.join(root, "session"),
+    port: 0,
+    runtimeVersion: "test-http",
+    runtimeRoots: createIsolatedRuntimeRoots(root),
+    createBrowserBridge: async () => bridge,
+  });
+
+  try {
+    await assert.rejects(
+      () => requestJson("GET", `${metadata.baseUrl}/tabs?workspaceRef=workspace_missing`),
+      (error) => {
+        assert.equal(error.status, 500);
+        assert.match(error.body.error, /Workspace workspace_missing is not available; create a new workspace with POST \/workspaces\./);
+        return true;
+      },
+    );
+  } finally {
+    await daemon.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("browser-sessiond query full only returns workspace-local open tabs in the public snapshot envelope", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
   const bridge = createFakeBrowserBridge();
@@ -361,6 +485,54 @@ test("browser-sessiond query full only returns workspace-local open tabs in the 
     assert.match(fullQuery.snapshotText, /### Open tabs/);
     assert.match(fullQuery.snapshotText, /Workspace/);
     assert.doesNotMatch(fullQuery.snapshotText, /Details/);
+  } finally {
+    await daemon.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("browser-sessiond filters closed workspace tabs out of public tab lists and rewritten open-tab envelopes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const bridge = createFakeBrowserBridge();
+  const { daemon, metadata } = await startBrowserSessionDaemon({
+    sessionRoot: path.join(root, "session"),
+    port: 0,
+    runtimeVersion: "test-http",
+    runtimeRoots: createIsolatedRuntimeRoots(root),
+    createBrowserBridge: async () => bridge,
+  });
+
+  try {
+    const workspaces = await requestJson("POST", `${metadata.baseUrl}/workspaces`, {});
+    await daemon.workspaceState.writeWorkspaceTab({
+      workspaceRef: workspaces.workspaceRef,
+      workspaceTabRef: "workspace_tab_closed",
+      targetId: "target-closed",
+      status: "closed",
+      browserTabIndex: undefined,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/closed",
+        title: "Closed tab",
+      },
+      snapshotPath: "/tmp/closed.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    const tabs = await requestJson("GET", `${metadata.baseUrl}/tabs?workspaceRef=${workspaces.workspaceRef}`);
+    const fullQuery = await requestJson(
+      "POST",
+      `${metadata.baseUrl}/query?workspaceRef=${workspaces.workspaceRef}`,
+      {
+        mode: "full",
+      },
+    );
+
+    assert.equal(tabs.ok, true);
+    assert.equal(tabs.tabs.some((tab) => tab.title === "Closed tab"), false);
+    assert.equal(fullQuery.ok, true);
+    assert.doesNotMatch(fullQuery.snapshotText, /Closed tab/);
   } finally {
     await daemon.stop();
     await rm(root, { recursive: true, force: true });
@@ -608,6 +780,44 @@ test("browser-sessiond click adopts a newly focused tab into the workspace and r
     );
     assert.equal(
       tabs.tabs.some((tab) => tab.workspaceTabRef === originalTabRef && tab.title === "Inbox"),
+      true,
+    );
+  } finally {
+    await daemon.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("browser-sessiond click adopts a newly active tab even when the new target has no openerId", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const bridge = createActivePopupWithoutOpenerBrowserBridge();
+  const { daemon, metadata } = await startBrowserSessionDaemon({
+    sessionRoot: path.join(root, "session"),
+    port: 0,
+    runtimeVersion: "test-http",
+    runtimeRoots: createIsolatedRuntimeRoots(root),
+    createBrowserBridge: async () => bridge,
+  });
+
+  try {
+    const workspace = await requestJson("POST", `${metadata.baseUrl}/workspaces`, {});
+    const click = await requestJson(
+      "POST",
+      `${metadata.baseUrl}/click?workspaceRef=${workspace.workspaceRef}`,
+      {
+        uid: "page_heading",
+      },
+    );
+
+    assert.equal(click.ok, true);
+    assert.equal(click.page.normalizedPath, "/conversation/42");
+    assert.equal(click.page.title, "Conversation");
+    assert.match(click.workspaceTabRef, /^workspace_tab_[0-9a-f-]+$/i);
+
+    const originalTabRef = workspace.tabs.find((tab) => tab.active)?.workspaceTabRef;
+    assert.notEqual(click.workspaceTabRef, originalTabRef);
+    assert.equal(
+      click.tabs.some((tab) => tab.workspaceTabRef === click.workspaceTabRef && tab.title === "Conversation" && tab.active),
       true,
     );
   } finally {
@@ -925,7 +1135,7 @@ test("browser-sessiond record-knowledge returns the bridged workspace response a
     assert.equal(recordKnowledge.summary.includes("Recorded knowledge for /dashboard"), true);
     assert.equal(recordKnowledge.record.guide, "Submit button is in the page body.");
     assert.equal(recordKnowledge.record.page.normalizedPath, "/dashboard");
-    assert.equal(bridge.calls.some((call) => call.name === "select_page" && call.args.pageId === 2), true);
+    assert.equal(bridge.calls.some((call) => call.name === "select_page" && call.args.pageId === 2), false);
   } finally {
     await daemon.stop();
     await rm(root, { recursive: true, force: true });

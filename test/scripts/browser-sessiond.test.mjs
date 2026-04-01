@@ -242,6 +242,43 @@ test("browser-sessiond opens a workspace from a bridge-provided pageId even when
   }
 });
 
+test("browser-sessiond refreshes an existing explicit workspaceRef but rejects an unknown explicit workspaceRef", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const daemon = new BrowserSessionDaemon({
+    sessionRoot: path.join(root, "session"),
+    port: 0,
+    runtimeVersion: "test-http",
+    createBrowserBridge: async () => createDirectOpenWorkspaceBridge(),
+  });
+  daemon.touch = async () => {};
+
+  try {
+    await daemon.start();
+
+    const created = await daemon.handleHttpRequest("openWorkspace", {
+      createWorkspaceIfMissing: true,
+    });
+    const refreshed = await daemon.handleHttpRequest("openWorkspace", {
+      workspaceRef: created.workspaceRef,
+    });
+
+    assert.equal(created.ok, true);
+    assert.equal(refreshed.ok, true);
+    assert.equal(refreshed.workspaceRef, created.workspaceRef);
+
+    await assert.rejects(
+      () =>
+        daemon.handleHttpRequest("openWorkspace", {
+          workspaceRef: "workspace_missing",
+        }),
+      /Workspace workspace_missing is not available; create a new workspace with POST \/workspaces\./i,
+    );
+  } finally {
+    await daemon.stop().catch(() => {});
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("browser-sessiond serializes overlapping workspace-scoped daemon requests", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
   let clickInProgress = false;

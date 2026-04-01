@@ -8,10 +8,12 @@ import { randomUUID } from "node:crypto";
 
 import {
   DefaultBrowserRuntime,
+  mintWorkspaceRef,
   parseTabInventory,
+  refreshWorkspaceSnapshot,
   runBrowserAction,
-  openWorkspaceFlow,
 } from "./browser-action.mjs";
+import { BrowserRequestQueue } from "./browser-request-queue.mjs";
 import { createConnectedDevtoolsBrowserClient } from "./devtools-browser-client.mjs";
 import { querySnapshotText } from "./knowledge-query.mjs";
 import { KnowledgeStore } from "./knowledge-store.mjs";
@@ -28,6 +30,16 @@ export const DEFAULT_RUNTIME_VERSION = "0.1.0";
 export const DEFAULT_HTTP_PORT = 3456;
 const DEFAULT_SNAPSHOT_TTL_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_WORKSPACE_TAB_URL = "chrome://newtab/";
+const QUEUED_ENDPOINTS = new Set([
+  "openWorkspace",
+  "navigate",
+  "click",
+  "type",
+  "press",
+  "selectTab",
+  "queryWorkspace",
+  "recordKnowledge",
+]);
 
 class WorkspaceTabRefStore {
   constructor() {
@@ -110,6 +122,7 @@ export class BrowserSessionDaemon {
     this.browserBridge = null;
     this.stopPromise = null;
     this.browserRuntime = this.createBrowserRuntime();
+    this.requestQueue = new BrowserRequestQueue();
     this.workspaceBindings = new WorkspaceBindingStore(path.join(this.runtimeRoots.tempRoot, "workspace-bindings"));
     this.workspaceState = new WorkspaceStore(path.join(this.runtimeRoots.tempRoot, "workspace-state"));
     this.workspaceTabRefs = new WorkspaceTabRefStore();
@@ -200,6 +213,14 @@ export class BrowserSessionDaemon {
     this.ensureStarted();
     await this.touch();
 
+    if (QUEUED_ENDPOINTS.has(endpoint)) {
+      return this.requestQueue.run(endpoint, async () => this.handleQueuedWorkspaceRequest(endpoint, body));
+    }
+
+    return this.handleUnqueuedHttpRequest(endpoint, body);
+  }
+
+  async handleUnqueuedHttpRequest(endpoint, body) {
     switch (endpoint) {
       case "health":
         return this.snapshotMetadata();
@@ -209,25 +230,39 @@ export class BrowserSessionDaemon {
         });
         return { ok: true };
       }
+      default:
+        throw new HttpError(501, `Endpoint ${endpoint} is not implemented`);
+    }
+  }
+
+  async handleQueuedWorkspaceRequest(endpoint, body) {
+    switch (endpoint) {
       case "openWorkspace":
         return this.openWorkspace(body);
       case "navigate":
-        return this.browserAction("navigate", "navigate_page", { type: "url", url: body.url }, body.workspaceRef);
+        return this.browserAction("navigate", "navigate_page", { type: "url", url: body.url }, body.workspaceRef, {
+          workspaceTabRef: body.workspaceTabRef,
+        });
       case "click":
-        return this.browserAction("click", "click", { uid: body.uid }, body.workspaceRef);
+        return this.browserAction("click", "click", { uid: body.uid }, body.workspaceRef, {
+          workspaceTabRef: body.workspaceTabRef,
+        });
       case "type":
-        return this.browserAction("type", "fill", { uid: body.uid, value: body.text }, body.workspaceRef);
+        return this.browserAction("type", "fill", { uid: body.uid, value: body.text }, body.workspaceRef, {
+          workspaceTabRef: body.workspaceTabRef,
+        });
       case "press":
-        return this.browserAction("press", "press_key", { key: body.key }, body.workspaceRef);
+        return this.browserAction("press", "press_key", { key: body.key }, body.workspaceRef, {
+          workspaceTabRef: body.workspaceTabRef,
+        });
       case "selectTab":
         return this.browserAction(
           "select-tab",
           "select_page",
-          { pageId: body.pageId, bringToFront: false },
+          { bringToFront: false },
           body.workspaceRef,
           {
-            preselectBoundTab: false,
-            nextBrowserTabIndex: body.pageId,
+            workspaceTabRef: body.workspaceTabRef,
           },
         );
       case "queryWorkspace":
@@ -350,7 +385,15 @@ export class BrowserSessionDaemon {
   }
 
   async openWorkspace(params) {
-    const result = await openWorkspaceFlow(params, this.actionDeps);
+    const createWorkspaceIfMissing = params.createWorkspaceIfMissing === true || params.workspaceRef === undefined;
+    const result = await refreshWorkspaceSnapshot(
+      {
+        workspaceRef: params.workspaceRef ?? mintWorkspaceRef(),
+        workspaceTabRef: params.workspaceTabRef,
+        createWorkspaceIfMissing,
+      },
+      this.actionDeps,
+    );
     return this.toPublicWorkspaceResult(result);
   }
 
@@ -359,6 +402,7 @@ export class BrowserSessionDaemon {
       {
         action,
         workspaceRef,
+        workspaceTabRef: options.workspaceTabRef,
         toolName,
         toolArgs,
         preselectBoundTab: options.preselectBoundTab,
@@ -372,7 +416,7 @@ export class BrowserSessionDaemon {
 
   async queryWorkspace(params) {
     const resolved = params.workspaceRef
-      ? await this.refreshSnapshotContextForWorkspace(params.workspaceRef)
+      ? await this.refreshSnapshotContextForWorkspace(params.workspaceRef, params.workspaceTabRef)
       : await this.resolveSnapshotContext(params);
     const snapshotText = resolved.workspaceRef
       ? await this.rewriteSnapshotEnvelopeForWorkspace(resolved.workspaceRef, resolved.snapshotText)
@@ -400,7 +444,11 @@ export class BrowserSessionDaemon {
 
   async recordKnowledge(params) {
     const timestamp = new Date().toISOString();
-    const resolvedPageContext = params.page === undefined ? await this.resolveSnapshotContext(params) : undefined;
+    const resolvedPageContext = params.page === undefined
+      ? params.workspaceRef
+        ? await this.refreshSnapshotContextForWorkspace(params.workspaceRef, params.workspaceTabRef)
+        : await this.resolveSnapshotContext(params)
+      : undefined;
     const page = params.page ?? resolvedPageContext?.page;
     if (!page) {
       throw new Error("recordKnowledge requires page, workspaceRef, or snapshotRef");
@@ -470,16 +518,17 @@ export class BrowserSessionDaemon {
     };
   }
 
-  async refreshSnapshotContextForWorkspace(workspaceRef) {
+  async refreshSnapshotContextForWorkspace(workspaceRef, workspaceTabRef) {
     const bindingExists = await this.workspaceBindings.exists(workspaceRef);
     if (!bindingExists) {
       throw new Error(`Workspace ${workspaceRef} is not available; create a new workspace with POST /workspaces.`);
     }
 
-    const refreshed = await openWorkspaceFlow({ workspaceRef }, this.actionDeps);
+    const refreshed = await refreshWorkspaceSnapshot({ workspaceRef, workspaceTabRef }, this.actionDeps);
     const snapshotText = await this.snapshots.read(refreshed.snapshotPath);
     return {
       workspaceRef,
+      ...(refreshed.workspaceTabRef ? { workspaceTabRef: refreshed.workspaceTabRef } : {}),
       snapshotRef: snapshotRefFromPath(refreshed.snapshotPath),
       snapshotPath: refreshed.snapshotPath,
       snapshotText,
@@ -588,13 +637,16 @@ export class BrowserSessionDaemon {
 
   async listWorkspaceTabs(workspaceRef) {
     const workspace = await this.workspaceState.readWorkspace(workspaceRef);
-    const workspaceTabs = await this.workspaceState.listWorkspaceTabs(workspaceRef);
+    const workspaceTabs = (await this.workspaceState.listWorkspaceTabs(workspaceRef))
+      .filter((workspaceTab) => workspaceTab.status === "open");
     for (const workspaceTab of workspaceTabs) {
-      this.workspaceTabRefs.rememberWorkspaceTab(
-        workspaceRef,
-        workspaceTab.workspaceTabRef,
-        workspaceTab.browserTabIndex,
-      );
+      if (Number.isInteger(workspaceTab.browserTabIndex) && workspaceTab.browserTabIndex >= 0) {
+        this.workspaceTabRefs.rememberWorkspaceTab(
+          workspaceRef,
+          workspaceTab.workspaceTabRef,
+          workspaceTab.browserTabIndex,
+        );
+      }
     }
     return workspaceTabs.map((workspaceTab) => ({
       workspaceTabRef: workspaceTab.workspaceTabRef,

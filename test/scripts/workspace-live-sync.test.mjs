@@ -167,6 +167,184 @@ test("post-sync adopts a newly opened page when openerId points at the acting wo
   }
 });
 
+test("post-sync adopts a newly active target even when openerId is missing", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-workspace-live-sync-"));
+  const store = new WorkspaceStore(path.join(root, "workspace-state"));
+
+  try {
+    await seedWorkspace(store, {
+      workspaceRef: "agent_main",
+      activeWorkspaceTabRef: "workspace_tab_home",
+      browserTabIndex: 1,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/home",
+        title: "Home",
+      },
+      snapshotPath: "/tmp/home.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+    await seedWorkspaceTab(store, {
+      workspaceRef: "agent_main",
+      workspaceTabRef: "workspace_tab_home",
+      targetId: "page-home",
+      status: "open",
+      browserTabIndex: 1,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/home",
+        title: "Home",
+      },
+      snapshotPath: "/tmp/home.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    const result = await postSyncWorkspace({
+      workspaceRef: "agent_main",
+      workspaceState: store,
+      preSyncPages: [
+        {
+          pageId: 1,
+          targetId: "page-home",
+          openerId: "",
+          url: "https://example.com/home",
+          title: "Home",
+        },
+      ],
+      postSyncPages: [
+        {
+          pageId: 1,
+          targetId: "page-home",
+          openerId: "",
+          url: "https://example.com/home",
+          title: "Home",
+        },
+        {
+          pageId: 2,
+          targetId: "page-thread",
+          openerId: "",
+          url: "https://example.com/thread/42",
+          title: "Thread",
+        },
+      ],
+      actionTarget: {
+        workspaceTabRef: "workspace_tab_home",
+        targetId: "page-home",
+      },
+      activeTargetId: "page-thread",
+    });
+
+    assert.ok(result.adoptedWorkspaceTab);
+    assert.equal(result.workspace.activeWorkspaceTabRef, result.adoptedWorkspaceTab.workspaceTabRef);
+    assert.equal(result.adoptedWorkspaceTab.targetId, "page-thread");
+    assert.equal(result.adoptedWorkspaceTab.browserTabIndex, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("post-sync promotes an already-known open workspace tab when activeTargetId switches focus", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-workspace-live-sync-"));
+  const store = new WorkspaceStore(path.join(root, "workspace-state"));
+
+  try {
+    await seedWorkspace(store, {
+      workspaceRef: "agent_main",
+      activeWorkspaceTabRef: "workspace_tab_home",
+      browserTabIndex: 1,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/home",
+        title: "Home",
+      },
+      snapshotPath: "/tmp/home.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+    await seedWorkspaceTab(store, {
+      workspaceRef: "agent_main",
+      workspaceTabRef: "workspace_tab_home",
+      targetId: "page-home",
+      status: "open",
+      browserTabIndex: 1,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/home",
+        title: "Home",
+      },
+      snapshotPath: "/tmp/home.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+    await seedWorkspaceTab(store, {
+      workspaceRef: "agent_main",
+      workspaceTabRef: "workspace_tab_details",
+      targetId: "page-details",
+      status: "open",
+      browserTabIndex: 2,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/details",
+        title: "Details",
+      },
+      snapshotPath: "/tmp/details.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    const result = await postSyncWorkspace({
+      workspaceRef: "agent_main",
+      workspaceState: store,
+      preSyncPages: [
+        {
+          pageId: 1,
+          targetId: "page-home",
+          openerId: "",
+          url: "https://example.com/home",
+          title: "Home",
+        },
+        {
+          pageId: 2,
+          targetId: "page-details",
+          openerId: "",
+          url: "https://example.com/details",
+          title: "Details",
+        },
+      ],
+      postSyncPages: [
+        {
+          pageId: 1,
+          targetId: "page-home",
+          openerId: "",
+          url: "https://example.com/home",
+          title: "Home",
+        },
+        {
+          pageId: 2,
+          targetId: "page-details",
+          openerId: "",
+          url: "https://example.com/details",
+          title: "Details",
+        },
+      ],
+      actionTarget: {
+        workspaceTabRef: "workspace_tab_home",
+        targetId: "page-home",
+      },
+      activeTargetId: "page-details",
+    });
+
+    assert.equal(result.adoptedWorkspaceTab, undefined);
+    assert.equal(result.workspace.activeWorkspaceTabRef, "workspace_tab_details");
+    assert.equal(result.workspace.browserTabIndex, 2);
+    assert.equal(result.workspace.page.normalizedPath, "/details");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function seedWorkspace(store, record) {
   await store.writeWorkspace(record);
 }

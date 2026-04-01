@@ -87,13 +87,37 @@ export async function postSyncWorkspace(input, options = {}) {
   let workspace = preSyncResult.workspace;
   const workspaceTabsByRef = new Map(preSyncResult.workspaceTabsByRef);
 
-  const adoptedCandidates = input.postSyncPages.filter(
-    (page) => !preSyncTargetIds.has(page.targetId) && page.openerId === input.actionTarget.targetId,
+  const promotedWorkspaceTab = input.activeTargetId
+    ? [...workspaceTabsByRef.values()].find(
+      (tab) => tab.status === "open" && tab.targetId === input.activeTargetId,
+    )
+    : undefined;
+
+  if (workspace && promotedWorkspaceTab && workspace.activeWorkspaceTabRef !== promotedWorkspaceTab.workspaceTabRef) {
+    workspace = {
+      ...workspace,
+      activeWorkspaceTabRef: promotedWorkspaceTab.workspaceTabRef,
+      browserTabIndex: promotedWorkspaceTab.browserTabIndex,
+      page: clonePageIdentity(promotedWorkspaceTab.page),
+      snapshotPath: promotedWorkspaceTab.snapshotPath,
+      updatedAt: timestamp,
+    };
+    await input.workspaceState.writeWorkspace(workspace);
+  }
+
+  const newTargets = input.postSyncPages.filter((page) => !preSyncTargetIds.has(page.targetId));
+  const adoptedByActiveTarget = input.activeTargetId
+    ? newTargets.find((page) => page.targetId === input.activeTargetId)
+    : undefined;
+  const openerLinkedTargets = newTargets.filter(
+    (page) => page.openerId === input.actionTarget.targetId,
   );
+  const adoptedCandidate = adoptedByActiveTarget
+    ?? (openerLinkedTargets.length === 1 ? openerLinkedTargets[0] : undefined);
   let adoptedWorkspaceTab;
 
-  if (adoptedCandidates.length === 1) {
-    const adoptedPage = adoptedCandidates[0];
+  if (adoptedCandidate) {
+    const adoptedPage = adoptedCandidate;
     const actionWorkspaceTab = workspaceTabsByRef.get(input.actionTarget.workspaceTabRef);
     adoptedWorkspaceTab = {
       workspaceRef: input.workspaceRef,
@@ -127,6 +151,7 @@ export async function postSyncWorkspace(input, options = {}) {
   return {
     workspace,
     workspaceTabsByRef,
+    livePagesByTargetId: preSyncResult.livePagesByTargetId,
     adoptedWorkspaceTab,
   };
 }
@@ -202,6 +227,9 @@ function assertPostSyncInput(input) {
   assertRecord(input.actionTarget, "actionTarget");
   assertNonEmptyString(input.actionTarget.workspaceTabRef, "actionTarget.workspaceTabRef");
   assertNonEmptyString(input.actionTarget.targetId, "actionTarget.targetId");
+  if (input.activeTargetId !== undefined) {
+    assertNonEmptyString(input.activeTargetId, "activeTargetId");
+  }
 }
 
 function assertWorkspaceState(value) {

@@ -38,12 +38,7 @@ export function createHttpRouteHandler(daemon) {
       assertHttpRequestBody(endpoint, body);
 
       const routedBody = mergeQueryParams(endpoint, body, searchParams);
-      const routedRequest = translateHttpRequestForDaemon(endpoint, routedBody, daemon);
-
-      if (routedRequest.preselectRequest) {
-        await daemon.handleHttpRequest("selectTab", routedRequest.preselectRequest);
-      }
-
+      const routedRequest = translateHttpRequestForDaemon(endpoint, routedBody);
       const result = await daemon.handleHttpRequest(routedRequest.endpoint, routedRequest.body);
       const publicResult = translateHttpResultFromDaemon(endpoint, result, routedBody);
       return writeJson(res, 200, shapeHttpPublicResultForEndpoint(endpoint, publicResult));
@@ -115,18 +110,21 @@ function assertNoUnexpectedQueryParams(endpoint, searchParams) {
   }
 }
 
-function translateHttpRequestForDaemon(endpoint, body, daemon) {
+function translateHttpRequestForDaemon(endpoint, body) {
   switch (endpoint) {
     case "workspaces":
       return {
         endpoint: "openWorkspace",
-        body: {},
+        body: {
+          createWorkspaceIfMissing: true,
+        },
       };
     case "tabs":
       return {
         endpoint: "openWorkspace",
         body: {
           workspaceRef: body.workspaceRef,
+          createWorkspaceIfMissing: false,
         },
       };
     case "selectTab":
@@ -134,36 +132,36 @@ function translateHttpRequestForDaemon(endpoint, body, daemon) {
         endpoint: "selectTab",
         body: {
           workspaceRef: body.workspaceRef,
-          pageId: resolveWorkspaceTabPageId(daemon, body.workspaceRef, body.workspaceTabRef),
+          workspaceTabRef: body.workspaceTabRef,
         },
       };
     case "navigate":
-      return translateWorkspaceScopedRequest(endpoint, body, daemon, {
+      return translateWorkspaceScopedRequest(endpoint, body, {
         url: body.url,
       });
     case "click":
-      return translateWorkspaceScopedRequest(endpoint, body, daemon, {
+      return translateWorkspaceScopedRequest(endpoint, body, {
         uid: body.uid,
       });
     case "type":
-      return translateWorkspaceScopedRequest(endpoint, body, daemon, {
+      return translateWorkspaceScopedRequest(endpoint, body, {
         uid: body.uid,
         text: body.text,
         submit: body.submit,
         slowly: body.slowly,
       });
     case "press":
-      return translateWorkspaceScopedRequest(endpoint, body, daemon, {
+      return translateWorkspaceScopedRequest(endpoint, body, {
         key: body.key,
       });
     case "recordKnowledge":
-      return translateWorkspaceScopedRequest(endpoint, body, daemon, {
+      return translateWorkspaceScopedRequest(endpoint, body, {
         guide: body.guide,
         keywords: body.keywords,
         rationale: body.rationale,
       });
     case "query":
-      return translateWorkspaceScopedRequest("queryWorkspace", body, daemon, {
+      return translateWorkspaceScopedRequest("queryWorkspace", body, {
         mode: body.mode,
         query: body.query,
         role: body.role,
@@ -216,23 +214,15 @@ function translateHttpResultFromDaemon(endpoint, result, requestBody) {
   }
 }
 
-function translateWorkspaceScopedRequest(endpoint, body, daemon, extraFields = {}) {
-  const request = {
+function translateWorkspaceScopedRequest(endpoint, body, extraFields = {}) {
+  return {
     endpoint,
     body: omitUndefinedFields({
       ...extraFields,
       workspaceRef: body.workspaceRef,
+      workspaceTabRef: body.workspaceTabRef,
     }),
   };
-
-  if (body.workspaceTabRef !== undefined) {
-    request.preselectRequest = {
-      workspaceRef: body.workspaceRef,
-      pageId: resolveWorkspaceTabPageId(daemon, body.workspaceRef, body.workspaceTabRef),
-    };
-  }
-
-  return request;
 }
 
 function omitUndefinedFields(value) {
@@ -243,14 +233,6 @@ function omitUndefinedFields(value) {
     }
   }
   return clone;
-}
-
-function resolveWorkspaceTabPageId(daemon, workspaceRef, workspaceTabRef) {
-  if (!daemon || typeof daemon.resolveWorkspaceTabPageId !== "function") {
-    throw new TypeError("daemon must expose resolveWorkspaceTabPageId(workspaceRef, workspaceTabRef)");
-  }
-
-  return daemon.resolveWorkspaceTabPageId(workspaceRef, workspaceTabRef);
 }
 
 async function readJsonRequestBody(req) {

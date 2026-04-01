@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { openWorkspaceFlow, runWorkspaceAction } from "../../scripts/browser-action.mjs";
+import { openWorkspaceFlow, refreshWorkspaceSnapshot, runWorkspaceAction } from "../../scripts/browser-action.mjs";
 import { KnowledgeStore } from "../../scripts/knowledge-store.mjs";
 import { SnapshotStore } from "../../scripts/snapshot-store.mjs";
 import { WorkspaceStore } from "../../scripts/workspace-store.mjs";
@@ -847,6 +847,124 @@ test("runWorkspaceAction keeps workspaceTabRef when the same targetId survives w
   }
 });
 
+test("runWorkspaceAction captures the newly active existing workspace tab after an action changes focus", async () => {
+  let activePageId = 1;
+  const harness = await createHarness({
+    captureSnapshotForPage: async (pageId) => {
+      assert.equal(pageId, 2);
+      return [
+        "## Latest page snapshot",
+        `uid=${pageId}_0 RootWebArea "Details" url="https://example.com/details"`,
+        `  uid=${pageId}_1 button "Reply"`,
+      ].join("\n");
+    },
+    callBrowserTool: async (name, args) => {
+      harness.browserCalls.push({ name, args });
+
+      if (name === "click") {
+        activePageId = 2;
+        return {
+          content: [
+            {
+              type: "text",
+              text: "click complete",
+            },
+          ],
+        };
+      }
+
+      throw new Error(`unexpected browser tool ${name}`);
+    },
+    listLivePageInventory: async () => [
+      {
+        pageId: 1,
+        targetId: "target-home",
+        openerId: "",
+        url: "https://example.com/home",
+        title: "Home",
+      },
+      {
+        pageId: 2,
+        targetId: "target-details",
+        openerId: "",
+        url: "https://example.com/details",
+        title: "Details",
+      },
+    ],
+    readActiveTabIndex: async () => activePageId,
+    openWorkspaceTab: async () => {
+      throw new Error("openWorkspaceTab should not run for an existing workspace action");
+    },
+  });
+
+  try {
+    await harness.workspaceState.writeWorkspace({
+      workspaceRef: "agent_main",
+      activeWorkspaceTabRef: "workspace_tab_home",
+      browserTabIndex: 1,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/home",
+        title: "Home",
+      },
+      snapshotPath: "/tmp/home.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+    await harness.workspaceState.writeWorkspaceTab({
+      workspaceRef: "agent_main",
+      workspaceTabRef: "workspace_tab_home",
+      targetId: "target-home",
+      status: "open",
+      browserTabIndex: 1,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/home",
+        title: "Home",
+      },
+      snapshotPath: "/tmp/home.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+    await harness.workspaceState.writeWorkspaceTab({
+      workspaceRef: "agent_main",
+      workspaceTabRef: "workspace_tab_details",
+      targetId: "target-details",
+      status: "open",
+      browserTabIndex: 2,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/details",
+        title: "Details",
+      },
+      snapshotPath: "/tmp/details.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    const result = await runWorkspaceAction(
+      {
+        action: "click",
+        workspaceRef: "agent_main",
+        toolName: "click",
+        toolArgs: {
+          uid: "open_details",
+        },
+      },
+      harness.deps,
+    );
+
+    assert.equal(result.workspaceTabRef, "workspace_tab_details");
+    assert.equal(result.page.normalizedPath, "/details");
+
+    const refreshedWorkspace = await harness.workspaceState.readWorkspace("agent_main");
+    assert.equal(refreshedWorkspace.activeWorkspaceTabRef, "workspace_tab_details");
+    assert.equal(refreshedWorkspace.browserTabIndex, 2);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("runWorkspaceAction surfaces a stale target error instead of falling back to the cached browserTabIndex", async () => {
   const harness = await createHarness({
     captureSnapshotForPage: async () => {
@@ -919,6 +1037,169 @@ test("runWorkspaceAction surfaces a stale target error instead of falling back t
       /targetId target-details-live is no longer present in the live browser inventory/i,
     );
     assert.deepEqual(harness.browserCalls, []);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("refreshWorkspaceSnapshot captures an explicit workspaceTabRef without selecting the browser-global current page", async () => {
+  const capturedPageIds = [];
+  const harness = await createHarness({
+    captureSnapshotForPage: async (pageId) => {
+      capturedPageIds.push(pageId);
+      return [
+        "## Latest page snapshot",
+        `uid=${pageId}_0 RootWebArea "Details" url="https://example.com/details"`,
+      ].join("\n");
+    },
+    callBrowserTool: async (name) => {
+      harness.browserCalls.push({ name, args: {} });
+      throw new Error(`unexpected browser tool ${name}`);
+    },
+    listLivePageInventory: async () => [
+      {
+        pageId: 1,
+        targetId: "target-home",
+        openerId: "",
+        url: "https://example.com/home",
+        title: "Home",
+      },
+      {
+        pageId: 2,
+        targetId: "target-details",
+        openerId: "",
+        url: "https://example.com/details",
+        title: "Details",
+      },
+    ],
+    openWorkspaceTab: async () => ({
+      pageId: 1,
+      pageListText: [
+        "## Pages",
+        "- 1 (current) [Home](https://example.com/home)",
+        "- 2 [Details](https://example.com/details)",
+      ].join("\n"),
+    }),
+  });
+
+  try {
+    await harness.workspaceState.writeWorkspace({
+      workspaceRef: "agent_main",
+      activeWorkspaceTabRef: "workspace_tab_home",
+      browserTabIndex: 1,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/home",
+        title: "Home",
+      },
+      snapshotPath: "/tmp/home.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    await harness.workspaceState.writeWorkspaceTab({
+      workspaceRef: "agent_main",
+      workspaceTabRef: "workspace_tab_home",
+      targetId: "target-home",
+      status: "open",
+      browserTabIndex: 1,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/home",
+        title: "Home",
+      },
+      snapshotPath: "/tmp/home.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    await harness.workspaceState.writeWorkspaceTab({
+      workspaceRef: "agent_main",
+      workspaceTabRef: "workspace_tab_details",
+      targetId: "target-details",
+      status: "open",
+      browserTabIndex: 2,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/details",
+        title: "Details",
+      },
+      snapshotPath: "/tmp/details.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    const result = await refreshWorkspaceSnapshot(
+      {
+        workspaceRef: "agent_main",
+        workspaceTabRef: "workspace_tab_details",
+      },
+      harness.deps,
+    );
+
+    assert.deepEqual(harness.browserCalls, []);
+    assert.deepEqual(capturedPageIds, [2]);
+    assert.equal(result.workspaceTabRef, "workspace_tab_details");
+    assert.equal(result.page.normalizedPath, "/details");
+
+    const workspace = await harness.workspaceState.readWorkspace("agent_main");
+    assert.equal(workspace.activeWorkspaceTabRef, "workspace_tab_details");
+    assert.equal(workspace.browserTabIndex, 2);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("refreshWorkspaceSnapshot creates a first-time workspace through the shared transaction path when creation is requested", async () => {
+  const harness = await createHarness({
+    captureSnapshotForPage: async (pageId) =>
+      [
+        "## Latest page snapshot",
+        `uid=${pageId}_0 RootWebArea "Workspace" url="chrome://newtab/"`,
+      ].join("\n"),
+    callBrowserTool: async (name) => {
+      harness.browserCalls.push({ name, args: {} });
+      throw new Error(`unexpected browser tool ${name}`);
+    },
+    listLivePageInventory: async (callIndex) => {
+      if (callIndex === 1) {
+        return [];
+      }
+
+      return [
+        {
+          pageId: 7,
+          targetId: "target-workspace",
+          openerId: "",
+          url: "chrome://newtab/",
+          title: "Workspace",
+        },
+      ];
+    },
+    openWorkspaceTab: async () => ({
+      pageId: 7,
+      pageListText: "## Pages\n- 7 (current) [Workspace](chrome://newtab/)",
+    }),
+  });
+
+  try {
+    const result = await refreshWorkspaceSnapshot(
+      {
+        workspaceRef: "agent_main",
+        createWorkspaceIfMissing: true,
+      },
+      harness.deps,
+    );
+
+    assert.equal(harness.openWorkspaceTabCalls, 1);
+    assert.deepEqual(harness.browserCalls, []);
+    assert.equal(result.workspaceRef, "agent_main");
+    assert.equal(result.workspaceTabRef, undefined);
+    assert.equal(result.page.title, "Workspace");
+
+    const workspace = await harness.workspaceState.readWorkspace("agent_main");
+    assert.equal(workspace.activeWorkspaceTabRef.startsWith("workspace_tab_"), true);
+    assert.equal(workspace.browserTabIndex, 7);
   } finally {
     await harness.cleanup();
   }
