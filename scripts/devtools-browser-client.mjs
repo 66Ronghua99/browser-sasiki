@@ -22,7 +22,7 @@ export class DevtoolsBrowserClient {
   }
 
   async listPages() {
-    return formatPageInventory(await this.listLivePages());
+    return formatPageInventory(await this.listLivePages(), await this.readActivePageId());
   }
 
   async listLivePages() {
@@ -107,7 +107,8 @@ export class DevtoolsBrowserClient {
     const page = await this.openWorkspaceTab(url, {
       bringToFront: background !== true,
     });
-    return formatPageInventory(await this.listLivePages(), page.pageId);
+    const activePageId = background === true ? await this.readActivePageId() : page.pageId;
+    return formatPageInventory(await this.listLivePages(), activePageId);
   }
 
   async selectPage(pageId, bringToFront = true) {
@@ -117,7 +118,7 @@ export class DevtoolsBrowserClient {
       await page.bringToFront?.();
     }
 
-    return formatPageInventory(await this.listLivePages());
+    return formatPageInventory(await this.listLivePages(), await this.readActivePageId());
   }
 
   async click(input) {
@@ -372,6 +373,49 @@ export class DevtoolsBrowserClient {
       return sanitizeTargetInfo(result?.targetInfo);
     });
   }
+
+  async readActivePageId() {
+    const pages = this.listContextPages();
+    const activities = await Promise.all(pages.map(async (page, pageId) => ({
+      pageId,
+      ...(await this.readPageActivity(page)),
+    })));
+    const focused = activities.find((page) => page.hasFocus === true);
+    if (focused) {
+      return focused.pageId;
+    }
+    const visible = activities.find((page) => page.visibilityState === "visible" || page.hidden === false);
+    return visible?.pageId;
+  }
+
+  async readPageActivity(page) {
+    if (typeof page.evaluate !== "function") {
+      return {
+        hasFocus: false,
+        visibilityState: "",
+        hidden: true,
+      };
+    }
+
+    try {
+      const state = await page.evaluate(() => ({
+        hasFocus: document.hasFocus(),
+        visibilityState: document.visibilityState,
+        hidden: document.hidden,
+      }));
+      return {
+        hasFocus: state?.hasFocus === true,
+        visibilityState: typeof state?.visibilityState === "string" ? state.visibilityState : "",
+        hidden: state?.hidden !== false,
+      };
+    } catch {
+      return {
+        hasFocus: false,
+        visibilityState: "",
+        hidden: true,
+      };
+    }
+  }
 }
 
 export async function createConnectedDevtoolsBrowserClient(options = {}, dependencies = {}) {
@@ -465,10 +509,10 @@ function readPageUrl(page) {
   return typeof url === "string" && url.trim().length > 0 ? url : "about:blank";
 }
 
-function formatPageInventory(pages) {
+function formatPageInventory(pages, activePageId) {
   const lines = ["## Pages"];
   for (const page of pages) {
-    lines.push(`- ${page.pageId} [${escapeMarkdownLabel(page.title)}](${page.url})`);
+    lines.push(`- ${page.pageId} ${page.pageId === activePageId ? "(current) " : ""}[${escapeMarkdownLabel(page.title)}](${page.url})`);
   }
   return lines.join("\n");
 }

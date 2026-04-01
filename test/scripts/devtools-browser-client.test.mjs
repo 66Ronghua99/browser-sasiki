@@ -425,6 +425,38 @@ test("devtools browser client keeps duplicate title/url pages distinct by target
   ]);
 });
 
+test("devtools browser client marks the visible focused page as current in page inventory text", async () => {
+  const { browser } = createHarnessBrowser({
+    pages: [
+      createPage({
+        url: "https://example.com/home",
+        title: "Home",
+        activity: {
+          hasFocus: false,
+          visibilityState: "hidden",
+          hidden: true,
+        },
+      }),
+      createPage({
+        url: "https://example.com/publish",
+        title: "Publish",
+        activity: {
+          hasFocus: true,
+          visibilityState: "visible",
+          hidden: false,
+        },
+      }),
+    ],
+    targetInfos: [],
+  });
+  const client = new DevtoolsBrowserClient(browser);
+
+  const pageList = await client.listPages();
+
+  assert.match(pageList, /\- 0 \[Home\]\(https:\/\/example\.com\/home\)/);
+  assert.match(pageList, /\- 1 \(current\) \[Publish\]\(https:\/\/example\.com\/publish\)/);
+});
+
 test("devtools browser client captures a snapshot for an explicit pageId", async () => {
   const { browser } = createHarnessBrowser({
     pages: [
@@ -739,6 +771,7 @@ function createPage({
   url,
   title,
   targetInfo = null,
+  activity = null,
 }) {
   const page = {
     gotoCalls: [],
@@ -749,6 +782,11 @@ function createPage({
     bringToFrontCalls: 0,
     url: () => page.currentUrl,
     title: async () => page.currentTitle,
+    evaluate: async () => activity ?? {
+      hasFocus: false,
+      visibilityState: "",
+      hidden: true,
+    },
     goto: async (nextUrl) => {
       page.gotoCalls.push(nextUrl);
       page.currentUrl = nextUrl;

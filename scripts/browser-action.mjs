@@ -3,6 +3,7 @@ import path from "node:path";
 import process from "node:process";
 
 import { createConnectedDevtoolsBrowserClient } from "./devtools-browser-client.mjs";
+import { appendBrowserDebugLog } from "./browser-debug-log.mjs";
 import { KnowledgeStore } from "./knowledge-store.mjs";
 import { defaultRuntimeRoots } from "./paths.mjs";
 import { pageIdentityFromSnapshotText, pageIdentityFromUrl } from "./page-identity.mjs";
@@ -144,6 +145,13 @@ async function runWorkspaceTransaction(input, deps) {
   const workspaceRef = requireNonEmptyString(input.workspaceRef, "workspaceRef");
   const workspaceState = resolveWorkspaceState(deps);
   const preSyncPages = await readLivePageInventory(deps.browser);
+  await appendBrowserDebugLog("workspace-transaction:start", {
+    workspaceRef,
+    action: input.action ?? "refresh",
+    workspaceTabRef: input.workspaceTabRef,
+    toolName: input.toolName,
+    preSyncPages,
+  });
   const preSync = await preSyncWorkspace({
     workspaceRef,
     requestedWorkspaceTabRef: input.workspaceTabRef,
@@ -155,30 +163,54 @@ async function runWorkspaceTransaction(input, deps) {
     : input.createWorkspaceIfMissing === true
       ? await openNewWorkspaceTransactionTarget(deps.browser)
       : resolveExecutionTarget(preSync, workspaceRef, input.workspaceTabRef);
+  await appendBrowserDebugLog("workspace-transaction:resolved-target", {
+    workspaceRef,
+    action: input.action ?? "refresh",
+    actionTarget,
+    workspace: preSync.workspace,
+  });
 
   let postSyncPages = actionTarget.postSyncPages;
   let captureTarget = actionTarget;
+  let activeTargetId;
 
   if (!actionTarget.createdWorkspace && typeof input.toolName === "string" && input.toolName.length > 0) {
     await deps.browser.callBrowserTool(input.toolName, {
       ...input.toolArgs,
       pageId: actionTarget.browserTabIndex,
     });
+    await appendBrowserDebugLog("workspace-transaction:tool-complete", {
+      workspaceRef,
+      action: input.action ?? "refresh",
+      toolName: input.toolName,
+      actionTarget,
+      toolArgs: input.toolArgs,
+    });
   }
 
   if (!actionTarget.createdWorkspace) {
-    postSyncPages = await readLivePageInventory(deps.browser);
+    ({ postSyncPages, activeTargetId } = await waitForPostActionBrowserState({
+      browser: deps.browser,
+      preSyncPages,
+      actionTarget,
+      shouldReadActiveTab: typeof input.toolName === "string" && input.toolName.length > 0,
+    }));
     const postSync = await postSyncWorkspace({
       workspaceRef,
       workspaceState,
       preSyncPages,
       postSyncPages,
       actionTarget,
-      activeTargetId: await resolveActiveTargetIdForPostSync(
-        deps.browser,
-        postSyncPages,
-        typeof input.toolName === "string" && input.toolName.length > 0,
-      ),
+      activeTargetId,
+    });
+    await appendBrowserDebugLog("workspace-transaction:post-sync", {
+      workspaceRef,
+      action: input.action ?? "refresh",
+      actionTarget,
+      activeTargetId,
+      postSyncPages,
+      adoptedWorkspaceTab: postSync.adoptedWorkspaceTab,
+      workspace: postSync.workspace,
     });
     captureTarget = resolveExecutionTarget(
       postSync,
@@ -213,6 +245,13 @@ async function runWorkspaceTransaction(input, deps) {
   });
 
   const knowledgeHits = await readKnowledgeHits(deps, page.origin, page.normalizedPath);
+  await appendBrowserDebugLog("workspace-transaction:complete", {
+    workspaceRef,
+    action: input.action ?? "refresh",
+    captureTarget,
+    page,
+    snapshotPath,
+  });
 
   return {
     workspaceRef,
@@ -597,6 +636,79 @@ async function resolveActiveTargetIdForPostSync(browser, livePageInventory, shou
   } catch {
     return undefined;
   }
+}
+
+async function waitForPostActionBrowserState(input) {
+  const shouldPoll = input.shouldReadActiveTab === true;
+  let postSyncPages = await readLivePageInventory(input.browser);
+  let activeTargetId = await resolveActiveTargetIdForPostSync(input.browser, postSyncPages, shouldPoll);
+  await appendBrowserDebugLog("workspace-transaction:post-action-observe", {
+    attempt: 0,
+    actionTarget: input.actionTarget,
+    preSyncPages: input.preSyncPages,
+    postSyncPages,
+    activeTargetId,
+  });
+
+  if (hasObservableBrowserChange({
+    preSyncPages: input.preSyncPages,
+    postSyncPages,
+    actionTarget: input.actionTarget,
+    activeTargetId,
+  })) {
+    return {
+      postSyncPages,
+      activeTargetId,
+    };
+  }
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await sleep(150);
+    postSyncPages = await readLivePageInventory(input.browser);
+    activeTargetId = await resolveActiveTargetIdForPostSync(input.browser, postSyncPages, shouldPoll);
+    await appendBrowserDebugLog("workspace-transaction:post-action-observe", {
+      attempt: attempt + 1,
+      actionTarget: input.actionTarget,
+      preSyncPages: input.preSyncPages,
+      postSyncPages,
+      activeTargetId,
+    });
+    if (hasObservableBrowserChange({
+      preSyncPages: input.preSyncPages,
+      postSyncPages,
+      actionTarget: input.actionTarget,
+      activeTargetId,
+    })) {
+      break;
+    }
+  }
+
+  return {
+    postSyncPages,
+    activeTargetId,
+  };
+}
+
+function hasObservableBrowserChange(input) {
+  if (input.postSyncPages.length !== input.preSyncPages.length) {
+    return true;
+  }
+
+  const preTargets = new Set(input.preSyncPages.map((page) => page.targetId));
+  const newTargets = input.postSyncPages.filter((page) => !preTargets.has(page.targetId));
+  if (newTargets.length > 0) {
+    return true;
+  }
+
+  if (input.activeTargetId && input.activeTargetId !== input.actionTarget.targetId) {
+    return true;
+  }
+
+  return input.postSyncPages.some((page) => page.openerId === input.actionTarget.targetId && !preTargets.has(page.targetId));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function resolveLivePageIdForTarget(browser, targetId) {

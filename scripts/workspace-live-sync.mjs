@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { appendBrowserDebugLog } from "./browser-debug-log.mjs";
 import { pageIdentityFromUrl } from "./page-identity.mjs";
 
 export async function preSyncWorkspace(input, options = {}) {
@@ -86,6 +87,7 @@ export async function postSyncWorkspace(input, options = {}) {
   );
   let workspace = preSyncResult.workspace;
   const workspaceTabsByRef = new Map(preSyncResult.workspaceTabsByRef);
+  const knownTargetIds = new Set([...workspaceTabsByRef.values()].map((tab) => tab.targetId));
 
   const promotedWorkspaceTab = input.activeTargetId
     ? [...workspaceTabsByRef.values()].find(
@@ -106,15 +108,33 @@ export async function postSyncWorkspace(input, options = {}) {
   }
 
   const newTargets = input.postSyncPages.filter((page) => !preSyncTargetIds.has(page.targetId));
+  const unboundLiveTargets = input.postSyncPages.filter((page) => !knownTargetIds.has(page.targetId));
   const adoptedByActiveTarget = input.activeTargetId
     ? newTargets.find((page) => page.targetId === input.activeTargetId)
     : undefined;
   const openerLinkedTargets = newTargets.filter(
     (page) => page.openerId === input.actionTarget.targetId,
   );
+  const unboundOpenerLinkedTargets = unboundLiveTargets.filter(
+    (page) => page.openerId === input.actionTarget.targetId,
+  );
   const adoptedCandidate = adoptedByActiveTarget
+    ?? (unboundOpenerLinkedTargets.length === 1 ? unboundOpenerLinkedTargets[0] : undefined)
     ?? (openerLinkedTargets.length === 1 ? openerLinkedTargets[0] : undefined);
   let adoptedWorkspaceTab;
+  await appendBrowserDebugLog("workspace-post-sync:candidates", {
+    workspaceRef: input.workspaceRef,
+    actionTarget: input.actionTarget,
+    activeTargetId: input.activeTargetId,
+    preSyncPages: input.preSyncPages,
+    postSyncPages: input.postSyncPages,
+    newTargets,
+    unboundLiveTargets,
+    openerLinkedTargets,
+    unboundOpenerLinkedTargets,
+    adoptedByActiveTarget,
+    adoptedCandidate,
+  });
 
   if (adoptedCandidate) {
     const adoptedPage = adoptedCandidate;
