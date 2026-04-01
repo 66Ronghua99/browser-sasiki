@@ -55,6 +55,8 @@ test("openWorkspaceFlow reconciles live browser state into the cached workspace 
     await harness.workspaceState.writeWorkspaceTab({
       workspaceRef: "agent_main",
       workspaceTabRef: "workspace_tab_cached",
+      targetId: "target-stale-page",
+      status: "open",
       browserTabIndex: 99,
       page: {
         origin: "https://example.com",
@@ -165,6 +167,8 @@ test("openWorkspaceFlow refreshes an existing workspaceRef binding without openi
     await harness.workspaceState.writeWorkspaceTab({
       workspaceRef: "agent_main",
       workspaceTabRef: "workspace_tab_inbox",
+      targetId: "target-inbox-page",
+      status: "open",
       browserTabIndex: 4,
       page: {
         origin: "https://example.com",
@@ -238,6 +242,8 @@ test("openWorkspaceFlow rebinds a stale workspaceRef when the previously selecte
     await harness.workspaceState.writeWorkspaceTab({
       workspaceRef: "x-work",
       workspaceTabRef: "workspace_tab_old",
+      targetId: "target-old-page",
+      status: "open",
       browserTabIndex: 25,
       page: {
         origin: "https://x.com",
@@ -417,6 +423,8 @@ test("runWorkspaceAction resolves its target from workspace.activeWorkspaceTabRe
     await harness.workspaceState.writeWorkspaceTab({
       workspaceRef: "agent_main",
       workspaceTabRef: "workspace_tab_details",
+      targetId: "target-details-page",
+      status: "open",
       browserTabIndex: 4,
       page: {
         origin: "https://example.com",
@@ -453,6 +461,200 @@ test("runWorkspaceAction resolves its target from workspace.activeWorkspaceTabRe
   }
 });
 
+test("runWorkspaceAction keeps workspaceTabRef when the same targetId survives with a shifted page index", async () => {
+  const stableTargetId = "target-details-live";
+
+  const harness = await createHarness({
+    captureSnapshot: async () =>
+      [
+        "## Latest page snapshot",
+        `uid=1_0 RootWebArea "Details" url="https://example.com/details"`,
+        `  uid=1_1 button "Reply"`,
+      ].join("\n"),
+    callBrowserTool: async (name, args) => {
+      harness.browserCalls.push({ name, args });
+
+      if (name === "select_page") {
+        if (args.pageId === 2) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: [
+                      "## Pages",
+                      "- 1 [Details](https://example.com/details)",
+                      "- 2 [Details](https://example.com/details) (current)",
+                      "- 3 [Draft](https://example.com/draft)",
+                    ].join("\n"),
+                  },
+                ],
+              };
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: [
+                "## Pages",
+                "- 1 [Details](https://example.com/details) (current)",
+                "- 2 [Draft](https://example.com/draft)",
+              ].join("\n"),
+            },
+          ],
+        };
+      }
+
+      if (name === "press_key") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "press complete",
+            },
+          ],
+        };
+      }
+
+      if (name === "list_pages") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: [
+                "## Pages",
+                "- 1 [Details](https://example.com/details) (current)",
+                "- 2 [Draft](https://example.com/draft)",
+              ].join("\n"),
+            },
+          ],
+        };
+      }
+
+      throw new Error(`unexpected browser tool ${name}`);
+    },
+    listLivePageInventory: async (callIndex) => {
+      if (callIndex === 1) {
+        return [
+          {
+            pageId: 2,
+            targetId: stableTargetId,
+            openerId: "page-home",
+            url: "https://example.com/details",
+            title: "Details",
+          },
+          {
+            pageId: 1,
+            targetId: "target-old-details",
+            openerId: "page-home",
+            url: "https://example.com/details",
+            title: "Details",
+          },
+          {
+            pageId: 3,
+            targetId: "target-draft",
+            openerId: "page-home",
+            url: "https://example.com/draft",
+            title: "Draft",
+          },
+        ];
+      }
+
+      return [
+        {
+          pageId: 1,
+          targetId: stableTargetId,
+          openerId: "page-home",
+          url: "https://example.com/details",
+          title: "Details",
+        },
+        {
+          pageId: 2,
+          targetId: "target-other",
+          openerId: "page-home",
+          url: "https://example.com/details",
+          title: "Details",
+        },
+        {
+          pageId: 3,
+          targetId: "target-draft",
+          openerId: "page-home",
+          url: "https://example.com/draft",
+          title: "Draft",
+        },
+      ];
+    },
+    readActiveTabIndex: async () => 1,
+    openWorkspaceTab: async () => ({
+      pageId: 2,
+      pageListText: [
+        "## Pages",
+        "- 1 [Details](https://example.com/details)",
+        "- 2 [Details](https://example.com/details) (current)",
+        "- 3 [Draft](https://example.com/draft)",
+      ].join("\n"),
+    }),
+  });
+
+  try {
+    await harness.workspaceState.writeWorkspace({
+      workspaceRef: "agent_main",
+      activeWorkspaceTabRef: "workspace_tab_stable",
+      browserTabIndex: 2,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/details",
+        title: "Details",
+      },
+      snapshotPath: "/tmp/details.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    await harness.workspaceState.writeWorkspaceTab({
+      workspaceRef: "agent_main",
+      workspaceTabRef: "workspace_tab_stable",
+      targetId: stableTargetId,
+      status: "open",
+      browserTabIndex: 2,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/details",
+        title: "Details",
+      },
+      snapshotPath: "/tmp/details.md",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    const result = await runWorkspaceAction(
+      {
+        action: "press",
+        workspaceRef: "agent_main",
+        toolName: "press_key",
+        toolArgs: {
+          key: "Enter",
+        },
+      },
+      harness.deps,
+    );
+
+    assert.ok(harness.listLivePageInventoryCalls >= 1);
+    assert.equal(result.workspaceTabRef, "workspace_tab_stable");
+    assert.equal(result.page.normalizedPath, "/details");
+
+    const refreshedWorkspace = await harness.workspaceState.readWorkspace("agent_main");
+    const refreshedTab = await harness.workspaceState.readWorkspaceTab("agent_main", "workspace_tab_stable");
+
+    assert.equal(refreshedWorkspace.browserTabIndex, 1);
+    assert.equal(refreshedWorkspace.activeWorkspaceTabRef, "workspace_tab_stable");
+    assert.equal(refreshedTab.targetId, stableTargetId);
+    assert.equal(refreshedTab.browserTabIndex, 1);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 async function createHarness(runtime, options = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-action-"));
   const workspaceBindings = new WorkspaceBindingStore(path.join(root, "workspace-bindings"));
@@ -462,6 +664,7 @@ async function createHarness(runtime, options = {}) {
   });
   const browserCalls = [];
   let openWorkspaceTabCalls = 0;
+  let listLivePageInventoryCalls = 0;
 
   return {
     deps: {
@@ -469,6 +672,12 @@ async function createHarness(runtime, options = {}) {
         captureSnapshot: async () => runtime.captureSnapshot(),
         callBrowserTool: async (name, args) => runtime.callBrowserTool(name, args),
         readActiveTabIndex: async () => runtime.readActiveTabIndex(),
+        listLivePageInventory: async () => {
+          listLivePageInventoryCalls += 1;
+          const provider = runtime.listLivePageInventory ?? (() => []);
+          const callIndex = listLivePageInventoryCalls;
+          return provider(callIndex);
+        },
         openWorkspaceTab: async () => {
           openWorkspaceTabCalls += 1;
           return runtime.openWorkspaceTab();
@@ -490,6 +699,9 @@ async function createHarness(runtime, options = {}) {
     browserCalls,
     get openWorkspaceTabCalls() {
       return openWorkspaceTabCalls;
+    },
+    get listLivePageInventoryCalls() {
+      return listLivePageInventoryCalls;
     },
     cleanup: async () => {
       await rm(root, { recursive: true, force: true });

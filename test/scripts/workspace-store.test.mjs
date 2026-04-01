@@ -29,6 +29,8 @@ test("workspace store round-trips workspace and workspace-tab state", async () =
     await store.writeWorkspaceTab({
       workspaceRef: "agent_main",
       workspaceTabRef: "workspace_tab_demo",
+      targetId: "page-home-stable",
+      status: "open",
       browserTabIndex: 7,
       page: {
         origin: "https://example.com",
@@ -60,6 +62,8 @@ test("workspace store round-trips workspace and workspace-tab state", async () =
     assert.deepEqual(workspaceTab, {
       workspaceRef: "agent_main",
       workspaceTabRef: "workspace_tab_demo",
+      targetId: "page-home-stable",
+      status: "open",
       browserTabIndex: 7,
       page: {
         origin: "https://example.com",
@@ -71,6 +75,89 @@ test("workspace store round-trips workspace and workspace-tab state", async () =
       updatedAt: "2026-03-31T00:00:00.000Z",
     });
     assert.deepEqual(workspaceTabs, [workspaceTab]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace store requires targetId and status on workspace-tab records", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-skill-workspace-tab-record-"));
+  const store = new WorkspaceStore(path.join(root, "workspace-state"));
+
+  try {
+    await assert.rejects(() =>
+      store.writeWorkspaceTab({
+        workspaceRef: "agent_main",
+        workspaceTabRef: "workspace_tab_demo",
+        browserTabIndex: 7,
+        page: {
+          origin: "https://example.com",
+          normalizedPath: "/workspace",
+          title: "Workspace",
+        },
+        snapshotPath: "/tmp/live-snapshot.md",
+        createdAt: "2026-03-31T00:00:00.000Z",
+        updatedAt: "2026-03-31T00:00:00.000Z",
+      }),
+      /targetId|status/i,
+    );
+
+    await assert.rejects(() =>
+      store.writeWorkspaceTab({
+        workspaceRef: "agent_main",
+        workspaceTabRef: "workspace_tab_demo",
+        targetId: "page-home",
+        browserTabIndex: 7,
+        page: {
+          origin: "https://example.com",
+          normalizedPath: "/workspace",
+          title: "Workspace",
+        },
+        snapshotPath: "/tmp/live-snapshot.md",
+        createdAt: "2026-03-31T00:00:00.000Z",
+        updatedAt: "2026-03-31T00:00:00.000Z",
+      }),
+      /status/i,
+    );
+
+    await assert.rejects(() =>
+      store.writeWorkspaceTab({
+        workspaceRef: "agent_main",
+        workspaceTabRef: "workspace_tab_demo",
+        targetId: "page-home",
+        status: "pending",
+        browserTabIndex: 7,
+        page: {
+          origin: "https://example.com",
+          normalizedPath: "/workspace",
+          title: "Workspace",
+        },
+        snapshotPath: "/tmp/live-snapshot.md",
+        createdAt: "2026-03-31T00:00:00.000Z",
+        updatedAt: "2026-03-31T00:00:00.000Z",
+      }),
+      /status must be "open" or "closed"/i,
+    );
+
+    await store.writeWorkspaceTab({
+      workspaceRef: "agent_main",
+      workspaceTabRef: "workspace_tab_demo",
+      targetId: "page-home",
+      status: "closed",
+      browserTabIndex: 7,
+      page: {
+        origin: "https://example.com",
+        normalizedPath: "/workspace",
+        title: "Workspace",
+      },
+      snapshotPath: "/tmp/live-snapshot.md",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
+    });
+
+    const workspaceTab = await store.readWorkspaceTab("agent_main", "workspace_tab_demo");
+    assert.equal(workspaceTab.targetId, "page-home");
+    assert.equal(workspaceTab.status, "closed");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -99,6 +186,8 @@ test("workspace reconciler keeps an explicitly requested workspace-tab identity 
     await store.writeWorkspaceTab({
       workspaceRef: "agent_main",
       workspaceTabRef: "workspace_tab_cached",
+      targetId: "page-home-stable",
+      status: "open",
       browserTabIndex: 99,
       page: {
         origin: "https://example.com",
@@ -160,6 +249,8 @@ test("workspace reconciler mints a fresh workspace-tab identity when live state 
     await store.writeWorkspaceTab({
       workspaceRef: "agent_main",
       workspaceTabRef: "workspace_tab_original",
+      targetId: "page-inbox-stable",
+      status: "open",
       browserTabIndex: 3,
       page: {
         origin: "https://example.com",

@@ -269,6 +269,74 @@ test("devtools browser client lists live pages and raw targets from the attached
   assert.equal(context.newPageCalls, 0);
 });
 
+test("devtools browser client lists live page inventory by targetId/openerId join (not positional zip)", async () => {
+  const { browser } = createHarnessBrowser({
+    pages: [
+      createPage({
+        url: "https://example.com/home",
+        title: "Home",
+      }),
+      createPage({
+        url: "https://example.com/inbox",
+        title: "Inbox",
+      }),
+    ],
+    targetInfos: [
+      {
+        targetId: "page-inbox",
+        type: "page",
+        title: "Inbox",
+        url: "https://example.com/inbox",
+        openerId: "page-home",
+        attached: true,
+      },
+      {
+        targetId: "page-home",
+        type: "page",
+        openerId: "opener-root",
+        title: "Home",
+        url: "https://example.com/home",
+        attached: true,
+      },
+      {
+        targetId: "service-worker-1",
+        type: "service_worker",
+        title: "Service Worker",
+        url: "https://example.com/sw.js",
+        attached: false,
+      },
+      {
+        targetId: "page-orphan",
+        openerId: "opener-root",
+        type: "page",
+        title: "Orphan",
+        url: "https://example.com/orphan",
+        attached: false,
+      },
+    ],
+  });
+  const client = new DevtoolsBrowserClient(browser);
+
+  const inventory = await client.listLivePageInventory();
+
+  assert.deepEqual(inventory, [
+    {
+      pageId: 0,
+      targetId: "page-home",
+      openerId: "opener-root",
+      url: "https://example.com/home",
+      title: "Home",
+    },
+    {
+      pageId: 1,
+      targetId: "page-inbox",
+      openerId: "page-home",
+      url: "https://example.com/inbox",
+      title: "Inbox",
+    },
+  ]);
+});
+
 test("devtools browser client opens a workspace tab inside the connected browser context", async () => {
   const existingPage = createPage({
     url: "https://example.com/home",
