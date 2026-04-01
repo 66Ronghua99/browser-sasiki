@@ -2,9 +2,9 @@ import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 import { realpathSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
 
 import {
   DefaultBrowserRuntime,
@@ -41,69 +41,6 @@ const QUEUED_ENDPOINTS = new Set([
   "recordKnowledge",
 ]);
 
-class WorkspaceTabRefStore {
-  constructor() {
-    this.workspaces = new Map();
-  }
-
-  materializeTabs(workspaceRef, tabs) {
-    const workspace = this.ensureWorkspace(workspaceRef);
-    return tabs.map((tab) => {
-      const workspaceTabRef = this.resolveOrMintWorkspaceTabRef(workspace, tab.index);
-      return {
-        ...omitIndex(tab),
-        workspaceTabRef,
-      };
-    });
-  }
-
-  resolvePageId(workspaceRef, workspaceTabRef) {
-    const workspace = this.workspaces.get(workspaceRef);
-    if (!workspace) {
-      throw new Error(`Workspace ${workspaceRef} is not available; create a new workspace with POST /workspaces.`);
-    }
-
-    const pageId = workspace.byWorkspaceTabRef.get(workspaceTabRef);
-    if (pageId === undefined) {
-      throw new Error(`workspaceTabRef ${workspaceTabRef} is not available in workspace ${workspaceRef}; call GET /tabs?workspaceRef=${workspaceRef} to refresh the workspace tab list.`);
-    }
-
-    return pageId;
-  }
-
-  rememberWorkspaceTab(workspaceRef, workspaceTabRef, pageId) {
-    const workspace = this.ensureWorkspace(workspaceRef);
-    workspace.byPageId.set(pageId, workspaceTabRef);
-    workspace.byWorkspaceTabRef.set(workspaceTabRef, pageId);
-  }
-
-  ensureWorkspace(workspaceRef) {
-    const existing = this.workspaces.get(workspaceRef);
-    if (existing) {
-      return existing;
-    }
-
-    const created = {
-      byPageId: new Map(),
-      byWorkspaceTabRef: new Map(),
-    };
-    this.workspaces.set(workspaceRef, created);
-    return created;
-  }
-
-  resolveOrMintWorkspaceTabRef(workspace, pageId) {
-    const existing = workspace.byPageId.get(pageId);
-    if (existing) {
-      return existing;
-    }
-
-    const workspaceTabRef = `workspace_tab_${randomUUID()}`;
-    workspace.byPageId.set(pageId, workspaceTabRef);
-    workspace.byWorkspaceTabRef.set(workspaceTabRef, pageId);
-    return workspaceTabRef;
-  }
-}
-
 export class BrowserSessionDaemon {
   constructor(options = {}) {
     this.env = options.env ?? (process.env);
@@ -125,7 +62,6 @@ export class BrowserSessionDaemon {
     this.requestQueue = new BrowserRequestQueue();
     this.workspaceBindings = new WorkspaceBindingStore(path.join(this.runtimeRoots.tempRoot, "workspace-bindings"));
     this.workspaceState = new WorkspaceStore(path.join(this.runtimeRoots.tempRoot, "workspace-state"));
-    this.workspaceTabRefs = new WorkspaceTabRefStore();
     this.snapshots = new SnapshotStore(path.join(this.runtimeRoots.tempRoot, "snapshots"), {
       ttlMs: DEFAULT_SNAPSHOT_TTL_MS,
     });
@@ -198,7 +134,6 @@ export class BrowserSessionDaemon {
       }
 
       this.metadata = null;
-      this.workspaceTabRefs = new WorkspaceTabRefStore();
       await rm(this.metadataPath, { force: true }).catch(() => {});
     })();
 
@@ -274,10 +209,6 @@ export class BrowserSessionDaemon {
     }
   }
 
-  resolveWorkspaceTabPageId(workspaceRef, workspaceTabRef) {
-    return this.workspaceTabRefs.resolvePageId(workspaceRef, workspaceTabRef);
-  }
-
   snapshotMetadata() {
     this.ensureStarted();
     return {
@@ -318,7 +249,6 @@ export class BrowserSessionDaemon {
   }
 
   async resetEphemeralWorkspaceState() {
-    this.workspaceTabRefs = new WorkspaceTabRefStore();
     await Promise.all([
       rm(path.join(this.runtimeRoots.tempRoot, "workspace-bindings"), { recursive: true, force: true }),
       rm(path.join(this.runtimeRoots.tempRoot, "tab-state"), { recursive: true, force: true }),
@@ -639,15 +569,6 @@ export class BrowserSessionDaemon {
     const workspace = await this.workspaceState.readWorkspace(workspaceRef);
     const workspaceTabs = (await this.workspaceState.listWorkspaceTabs(workspaceRef))
       .filter((workspaceTab) => workspaceTab.status === "open");
-    for (const workspaceTab of workspaceTabs) {
-      if (Number.isInteger(workspaceTab.browserTabIndex) && workspaceTab.browserTabIndex >= 0) {
-        this.workspaceTabRefs.rememberWorkspaceTab(
-          workspaceRef,
-          workspaceTab.workspaceTabRef,
-          workspaceTab.browserTabIndex,
-        );
-      }
-    }
     return workspaceTabs.map((workspaceTab) => ({
       workspaceTabRef: workspaceTab.workspaceTabRef,
       title: workspaceTab.page.title,
@@ -734,16 +655,6 @@ async function closeServer(server) {
 
 function snapshotRefFromPath(snapshotPath) {
   return path.basename(snapshotPath, path.extname(snapshotPath));
-}
-
-export function createWorkspaceTabRefStore() {
-  return new WorkspaceTabRefStore();
-}
-
-function omitIndex(tab) {
-  const clone = { ...tab };
-  delete clone.index;
-  return clone;
 }
 
 function workspaceTabUrlFromPage(page) {
