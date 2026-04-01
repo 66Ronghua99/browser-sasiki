@@ -1,6 +1,8 @@
 # Browser Sasiki
 
-Browser Sasiki is a browser automation skill for coding agents. It attaches to an existing Google Chrome session through Chrome DevTools and exposes a small HTTP API for opening workspaces, inspecting live pages, interacting with elements, and recording reusable page knowledge.
+Browser Sasiki is a browser automation skill for coding agents. It attaches to an existing Google Chrome session through direct DevTools and exposes a small HTTP API for opening workspaces, inspecting live pages, interacting with elements, and recording reusable page knowledge.
+
+This README is shared by the Sasiki `skill/` directory, which remains the source of truth, and the published mirror repo, so the instructions below are written to work in both places.
 
 ## What It Does
 
@@ -46,6 +48,10 @@ npm install
 
 Restart Codex after installation so the new skill is loaded.
 
+If you are reading this file from the main Sasiki source repo instead of the standalone mirror, run `cd skill` first so the commands below still execute from the skill root.
+
+To verify the install before attaching to Chrome, run `npm test`.
+
 ## Usage
 
 ### Requirements
@@ -63,11 +69,12 @@ node scripts/ensure-browser-session.mjs
 
 The command prints JSON session metadata. Read `baseUrl` from the output. The default is usually `http://127.0.0.1:3456`.
 
+For the curl examples below, the explicit `content-type: application/json` header is optional. The daemon parses the JSON body directly, so the minimal examples omit it.
+
 ### Open a workspace
 
 ```bash
 curl -s -X POST "$BASE_URL/workspaces" \
-  -H 'content-type: application/json' \
   -d '{}'
 ```
 
@@ -77,21 +84,23 @@ curl -s -X POST "$BASE_URL/workspaces" \
 curl -s "$BASE_URL/tabs?workspaceRef=workspace_demo"
 ```
 
+Use the returned `workspaceTabRef` when you need to target or preselect a specific workspace tab via `POST /select-tab` or any workspace-scoped action.
+
 ### Query the current page
 
 Search for a target on the live page:
 
 ```bash
 curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"mode":"search","query":"Search"}'
 ```
+
+`uid` is the only public selector handle for `/query`, `/click`, and `/type`.
 
 Get the full page snapshot:
 
 ```bash
 curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"mode":"full"}'
 ```
 
@@ -101,7 +110,6 @@ Navigate:
 
 ```bash
 curl -s -X POST "$BASE_URL/navigate?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"url":"https://example.com"}'
 ```
 
@@ -109,7 +117,6 @@ Click an element by `uid` from a previous query result:
 
 ```bash
 curl -s -X POST "$BASE_URL/click?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"uid":"uid_demo"}'
 ```
 
@@ -117,7 +124,6 @@ Type into the active element:
 
 ```bash
 curl -s -X POST "$BASE_URL/type?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"text":"hello"}'
 ```
 

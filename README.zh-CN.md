@@ -1,6 +1,6 @@
 # Browser Sasiki
 
-Browser Sasiki 是一个面向编码 agent 的浏览器自动化 skill。它通过 Chrome DevTools 连接到一个已经运行中的 Google Chrome 会话，并暴露一组简洁的 HTTP API，用来打开 workspace、查看实时页面、操作页面元素，以及记录可复用的页面知识。
+Browser Sasiki 是一个面向编码 agent 的浏览器自动化 skill。它通过 direct DevTools 连接到一个已经运行中的 Google Chrome 会话，并暴露一组简洁的 HTTP API，用来打开 workspace、查看实时页面、操作页面元素，以及记录可复用的页面知识。
 
 ## 做什么
 
@@ -67,7 +67,6 @@ node scripts/ensure-browser-session.mjs
 
 ```bash
 curl -s -X POST "$BASE_URL/workspaces" \
-  -H 'content-type: application/json' \
   -d '{}'
 ```
 
@@ -83,7 +82,6 @@ curl -s "$BASE_URL/tabs?workspaceRef=workspace_demo"
 
 ```bash
 curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"mode":"search","query":"Search"}'
 ```
 
@@ -91,7 +89,6 @@ curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
 
 ```bash
 curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"mode":"full"}'
 ```
 
@@ -101,7 +98,6 @@ curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
 
 ```bash
 curl -s -X POST "$BASE_URL/navigate?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"url":"https://example.com"}'
 ```
 
@@ -109,7 +105,6 @@ curl -s -X POST "$BASE_URL/navigate?workspaceRef=workspace_demo" \
 
 ```bash
 curl -s -X POST "$BASE_URL/click?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"uid":"uid_demo"}'
 ```
 
@@ -117,7 +112,6 @@ curl -s -X POST "$BASE_URL/click?workspaceRef=workspace_demo" \
 
 ```bash
 curl -s -X POST "$BASE_URL/type?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"text":"hello"}'
 ```
 

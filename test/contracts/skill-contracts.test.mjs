@@ -222,3 +222,19 @@ test("front-door docs teach the workspace-first direct-DevTools surface and excl
   assert.doesNotMatch(readmeContent, /npm --prefix skill test/i);
   assert.match(readmeContent, /publish mirror|source of truth|single source of truth/i);
 });
+
+test("front-door docs keep curl JSON examples minimal and do not require an explicit content-type header", async () => {
+  const skillPath = fileURLToPath(new URL("../../SKILL.md", import.meta.url));
+  const readmePath = fileURLToPath(new URL("../../README.md", import.meta.url));
+  const readmeZhPath = fileURLToPath(new URL("../../README.zh-CN.md", import.meta.url));
+  const [skillContent, readmeContent, readmeZhContent] = await Promise.all([
+    readFile(skillPath, "utf8"),
+    readFile(readmePath, "utf8"),
+    readFile(readmeZhPath, "utf8"),
+  ]);
+
+  for (const content of [skillContent, readmeContent, readmeZhContent]) {
+    assert.doesNotMatch(content, /-H\s+['"]content-type:\s*application\/json['"]/i);
+    assert.match(content, /curl\s+-s\s+-X\s+POST[\s\S]*-d\s+'?\{/i);
+  }
+});

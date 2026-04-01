@@ -21,6 +21,8 @@ This command waits for the daemon to become healthy and prints the current sessi
 
 Read `baseUrl` from that JSON output and use it for the remaining HTTP calls. The default is usually `http://127.0.0.1:3456`.
 
+For the curl examples below, the explicit `content-type: application/json` header is optional. The daemon parses the JSON body directly, so the examples keep the request shape minimal.
+
 If you need to read health explicitly after that, use:
 
 `curl -s "$BASE_URL/health"`
@@ -94,33 +96,26 @@ The goal is to leave one reusable hint behind, not to restate knowledge that is 
 node scripts/ensure-browser-session.mjs
 
 curl -s -X POST "$BASE_URL/workspaces" \
-  -H 'content-type: application/json' \
   -d '{}'
 
 curl -s "$BASE_URL/tabs?workspaceRef=workspace_demo"
 
 curl -s -X POST "$BASE_URL/select-tab?workspaceRef=workspace_demo&workspaceTabRef=workspace_tab_demo" \
-  -H 'content-type: application/json' \
   -d '{}'
 
 curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"mode":"search","query":"Zara Zhang"}'
 
 curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"mode":"full"}'
 
 curl -s -X POST "$BASE_URL/navigate?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"url":"https://example.com"}'
 
 curl -s -X POST "$BASE_URL/click?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"uid":"submit_button"}'
 
 curl -s -X POST "$BASE_URL/record-knowledge?workspaceRef=workspace_demo" \
-  -H 'content-type: application/json' \
   -d '{"guide":"Promo code field is below the order summary.","keywords":["checkout","promo","summary"],"rationale":"The order summary and promo field are visible together on the checkout page."}'
 ```
 

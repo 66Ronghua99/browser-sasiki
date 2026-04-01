@@ -250,6 +250,44 @@ test("browser-sessiond query full only returns workspace-local open tabs in the 
   }
 });
 
+test("browser-sessiond accepts JSON POST bodies without an explicit content-type header", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
+  const bridge = createFakeBrowserBridge();
+  const { daemon, metadata } = await startBrowserSessionDaemon({
+    sessionRoot: path.join(root, "session"),
+    port: 0,
+    runtimeVersion: "test-http",
+    runtimeRoots: createIsolatedRuntimeRoots(root),
+    createBrowserBridge: async () => bridge,
+  });
+
+  try {
+    const workspaceResponse = await fetch(`${metadata.baseUrl}/workspaces`, {
+      method: "POST",
+      body: "{}",
+    });
+    const workspace = await workspaceResponse.json();
+
+    const queryResponse = await fetch(`${metadata.baseUrl}/query?workspaceRef=${workspace.workspaceRef}`, {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "search",
+        query: "Submit",
+      }),
+    });
+    const query = await queryResponse.json();
+
+    assert.equal(workspaceResponse.ok, true);
+    assert.equal(workspace.ok, true);
+    assert.equal(queryResponse.ok, true);
+    assert.equal(query.ok, true);
+    assert.equal(query.workspaceRef, workspace.workspaceRef);
+  } finally {
+    await daemon.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("browser-sessiond stale workspace failures stay on workspace-first language after a session reset", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-sessiond-http-"));
   const runtimeRoots = createIsolatedRuntimeRoots(root);
