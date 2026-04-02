@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { querySnapshotText } from "../../scripts/knowledge-query.mjs";
+import { parseSnapshotText } from "../../scripts/snapshot-parser.mjs";
 
 const snapshotText = [
   "## Latest page snapshot",
@@ -159,4 +160,63 @@ test("querySnapshotText search mode drops nested duplicate text hits and omits r
   assert.equal(result.matches[0].uid, "1_1");
   assert.equal(result.matches[0].role, "article");
   assert.equal("raw" in result.matches[0], false);
+});
+
+test("parseSnapshotText preserves parent/actionable metadata from enriched accessibility lines", () => {
+  const enrichedSnapshotText = [
+    "## Latest page snapshot",
+    'uid=1_0 RootWebArea "Inbox" url="https://example.com/inbox"',
+    "  uid=1_1 generic interactive=true",
+    '    uid=1_2 StaticText "客户消息" actionableUid=1_1',
+  ].join("\n");
+
+  const parsed = parseSnapshotText(enrichedSnapshotText);
+
+  assert.equal(parsed.elements.length, 3);
+  assert.deepEqual(parsed.elements[1], {
+    lineNumber: 3,
+    raw: "  uid=1_1 generic interactive=true",
+    role: "generic",
+    text: "",
+    uid: "1_1",
+    ref: "1_1",
+    depth: 1,
+    parentUid: "1_0",
+    interactive: true,
+    actionableUid: null,
+  });
+  assert.deepEqual(parsed.elements[2], {
+    lineNumber: 4,
+    raw: '    uid=1_2 StaticText "客户消息" actionableUid=1_1',
+    role: "StaticText",
+    text: "客户消息",
+    uid: "1_2",
+    ref: "1_2",
+    depth: 2,
+    parentUid: "1_1",
+    interactive: false,
+    actionableUid: "1_1",
+  });
+});
+
+test("querySnapshotText search mode promotes static text hits to actionable targets", () => {
+  const enrichedSnapshotText = [
+    "## Latest page snapshot",
+    'uid=1_0 RootWebArea "Inbox" url="https://example.com/inbox"',
+    "  uid=1_1 generic interactive=true",
+    '    uid=1_2 StaticText "客户消息" actionableUid=1_1',
+  ].join("\n");
+
+  const result = querySnapshotText({
+    snapshotText: enrichedSnapshotText,
+    mode: "search",
+    text: "客户消息",
+  });
+
+  assertSearchResult(result);
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].uid, "1_1");
+  assert.equal(result.matches[0].role, "generic");
+  assert.equal(result.matches[0].sourceUid, "1_2");
+  assert.equal(result.matches[0].sourceText, "客户消息");
 });

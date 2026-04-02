@@ -119,7 +119,10 @@ function parseAccessibilityElementLine(raw, lineNumber) {
 
   const uid = match.groups.uid.trim();
   const role = match.groups.role.trim();
-  const text = match.groups.rest.match(/(?:^|\s)"(?<label>(?:\\.|[^"])*)"/u)?.groups?.label ?? "";
+  const rest = match.groups.rest;
+  const text = rest.match(/(?:^|\s)"(?<label>(?:\\.|[^"])*)"/u)?.groups?.label ?? "";
+  const interactiveMatch = rest.match(/\binteractive=(?<interactive>true|false)\b/u);
+  const actionableUidMatch = rest.match(/\bactionableUid=(?<actionableUid>[^\s]+)\b/u);
 
   return {
     lineNumber,
@@ -128,12 +131,20 @@ function parseAccessibilityElementLine(raw, lineNumber) {
     text: unescapeQuotedText(text),
     uid,
     ref: uid,
+    interactive: interactiveMatch?.groups?.interactive === "true",
+    actionableUid: actionableUidMatch?.groups?.actionableUid?.trim() || null,
   };
 }
 
 export function parseSnapshotElements(snapshotText) {
-  return snapshotBodyLines(snapshotText)
-    .map(({ lineNumber, raw }) => {
+  const elements = [];
+  const depthStack = [];
+
+  for (const { lineNumber, raw } of snapshotBodyLines(snapshotText)) {
+    const leadingWhitespace = raw.match(/^\s*/u)?.[0].length ?? 0;
+    const depth = Math.floor(leadingWhitespace / 2);
+    const parentUid = depth > 0 ? depthStack[depth - 1] ?? null : null;
+    const parsed = (() => {
       const parsedAccessibility = parseAccessibilityElementLine(raw, lineNumber);
       if (parsedAccessibility) {
         return parsedAccessibility;
@@ -145,8 +156,25 @@ export function parseSnapshotElements(snapshotText) {
       }
 
       return parseBareElementLine(raw, lineNumber, raw);
-    })
-    .filter((element) => element !== null);
+    })();
+
+    if (!parsed) {
+      continue;
+    }
+
+    const element = {
+      ...parsed,
+      depth,
+      parentUid,
+      interactive: parsed.interactive === true,
+      actionableUid: typeof parsed.actionableUid === "string" ? parsed.actionableUid : null,
+    };
+    elements.push(element);
+    depthStack[depth] = element.uid ?? null;
+    depthStack.length = depth + 1;
+  }
+
+  return elements;
 }
 
 export function parseSnapshotText(snapshotText) {

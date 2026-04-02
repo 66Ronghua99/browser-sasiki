@@ -44,6 +44,10 @@ function toMatch(element) {
     role: element.role,
     text: element.text,
     uid: element.uid,
+    interactive: element.interactive === true,
+    actionableUid: element.actionableUid ?? null,
+    ...(typeof element.sourceUid === "string" ? { sourceUid: element.sourceUid } : {}),
+    ...(typeof element.sourceText === "string" ? { sourceText: element.sourceText } : {}),
   };
 }
 
@@ -98,6 +102,38 @@ function dedupeMatches(matches) {
   return uniqueMatches.filter((match) => !isRedundantStaticTextMatch(match, uniqueMatches));
 }
 
+function buildElementIndex(elements) {
+  return new Map(elements.map((element) => [element.uid, element]));
+}
+
+function resolveActionTarget(element, elementIndex) {
+  if (!element) {
+    return null;
+  }
+  if (typeof element.actionableUid === "string" && element.actionableUid.length > 0) {
+    return elementIndex.get(element.actionableUid) ?? element;
+  }
+  return element;
+}
+
+function promoteMatchesToActionTargets(matches, input, elementIndex) {
+  if (!input.text || input.uid || input.role) {
+    return matches;
+  }
+
+  return matches.map((match) => {
+    const target = resolveActionTarget(match, elementIndex);
+    if (!target || target.uid === match.uid) {
+      return match;
+    }
+    return {
+      ...target,
+      sourceUid: match.uid,
+      sourceText: match.text,
+    };
+  });
+}
+
 function defaultPageFromSnapshot(snapshotText, explicitPage) {
   if (explicitPage) {
     return {
@@ -125,7 +161,12 @@ export function querySnapshotText(input) {
   }
 
   const explicitMatches = parsedSnapshot.elements.filter((element) => matchesCriteria(element, input));
-  const matches = dedupeMatches(explicitMatches);
+  const promotedMatches = promoteMatchesToActionTargets(
+    explicitMatches,
+    input,
+    buildElementIndex(parsedSnapshot.elements),
+  );
+  const matches = dedupeMatches(promotedMatches);
 
   return {
     mode: "search",

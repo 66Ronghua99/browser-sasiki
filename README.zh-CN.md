@@ -2,6 +2,8 @@
 
 Browser Sasiki 是一个面向编码 agent 的浏览器自动化 skill。它通过 direct DevTools 连接到一个已经运行中的 Google Chrome 会话，并暴露一组简洁的 HTTP API，用来打开 workspace、查看实时页面、操作页面元素，以及记录可复用的页面知识。
 
+如果你是在 Sasiki 主仓库里做本地开发，请直接在 `Sasiki/skill` 下工作：进入 `cd skill` 后执行 `npm install`、`npm test`。不要再单独维护一份本地 `browser-sasiki` checkout 作为开发目录；发布时直接从这个仓库推送 `skill/` subtree。
+
 ## 做什么
 
 - 启动或复用一个本地浏览器 daemon。
@@ -91,6 +93,8 @@ curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
 curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
   -d '{"mode":"full"}'
 ```
+
+`search` 模式会优先返回真实可操作目标的 `uid`，而不是只返回命中的文本节点。`full` 模式里如果某个节点本身可操作，会显示 `interactive=true`；如果当前文本节点应当路由到某个祖先动作目标，会显示 `actionableUid=<uid>`。
 
 ### 操作页面
 

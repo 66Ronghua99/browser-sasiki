@@ -24,8 +24,27 @@ test("openWorkspaceFlow reuses the selected new_page result for a fresh workspac
   ].join("\n");
 
   const browser = {
-    async captureSnapshot() {
+    async captureSnapshotForPage(pageId) {
+      assert.equal(pageId, 2);
       return rawSnapshotText;
+    },
+    async listLivePageInventory() {
+      return [
+        {
+          pageId: 1,
+          targetId: "target-home",
+          openerId: "",
+          url: "https://example.com/home",
+          title: "Home",
+        },
+        {
+          pageId: 2,
+          targetId: "target-new-tab",
+          openerId: "",
+          url: "chrome://new-tab-page/",
+          title: "New Tab",
+        },
+      ];
     },
     async callBrowserTool(name, args) {
       browserCalls.push({ name, args });

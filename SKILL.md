@@ -33,36 +33,35 @@ If you need to read health explicitly after that, use:
 - Use `GET /tabs` when you need the current open-tab inventory for a workspace.
 - Use `POST /select-tab` when you know the workspace tab you want to work in.
 - Use `POST /navigate`, `POST /click`, `POST /type`, `POST /press`, and `POST /query` when you already know the next browser action.
-- Use `POST /query` with `search` mode first if you have a potential target in mind but don't know where it is; use `full` mode only if you need to inspect the page structure or recover context.
-- Use `POST /record-knowledge` during the process whenever a stable reusable cue is exposed. A `full` mode query usually indicates the need for potentially reusable information. 
+- Use `POST /query` for contents such as interactive elements or text. 
+  - `search` mode provides actionable target uids; Query with `search` mode if you already have the keyword knowledge of potential targets but don't know their `uid`; 
+  - `full` mode exposes both text contents and interactive elements in the one-line snapshot text. Use `full` mode if (1) you know nothing about the page (no `knowledgeHits`) and you need to inspect the its structure for your next steps; (2) you need to read the texts.
+- Consider using `POST /record-knowledge` during the process whenever a query reveals reusable keywords. A `full` mode query for actionable elements usually indicates the need for such record. 
 
-Keep the loop small:
+A common workflow is as follows:
 
 1. Open or refresh the workspace.
 2. Select the tab you want.
 3. Do the next browser action.
 4. Inspect if the next action is still unclear.
-5. Record knowledge if you found something reusable.
+5. Record new keyword knowledge for this page.
 6. Loop task 2-5 until the task is complete and finish.
+7. Inspect whether new knowledge could be further recorded for the next run.
+
+## When To Record Knowledge
+**This is very important!!!**
+The goal is to leave one reusable hint behind.
+You **MUST** call `record-knowledge` when either of these is true:
+
+- you have just used `/query` with full-page exploration to locate an interactive element, and that exploration exposed reusable keywords or page cues that can help later runs read less irrelevant context
+- a query search guess successfully revealed a stable reusable cue for the same page or page family
+
+You could only skip recording knowledge if `knowledgeHits` already cover substantially the same cue for the same page
 
 ## How To Use Knowledge
 
 - knowledgeHits auto-load on page match during workspace creation, tab actions, and `/query`.
 - Consume those returned `knowledgeHits` directly as the reusable page guidance for the current run.
-
-## When To Record Knowledge
-
-You **MUST** successfully call `record-knowledge` when either of these is true:
-
-- you have used `/query` with full-page exploration to locate the right element or recover context, and that exploration exposed reusable keywords or page cues that can help later runs read less irrelevant context
-- a query result or successful action revealed a stable reusable cue for the same page or page family
-
-Before writing, compare the new cue with the current `knowledgeHits`:
-
-- if `knowledgeHits` already cover substantially the same cue for the same page, skip the write
-- if the cue is genuinely new, record it once; repeated writes for the same page + guide + keyword set are treated idempotently
-
-The goal is to leave one reusable hint behind, not to restate knowledge that is already loading correctly.
 
 ## Endpoints
 
@@ -140,6 +139,7 @@ The runtime keeps a stricter internal contract:
 Choose one explicit mode for `/query`:
 
 - `mode: "search"`: return compact `matches` only. Each match is concise (`lineNumber`, `role`, `text`, `uid`) and can assist you to find an element reference and its contents. **This should be your default choice as it saves tokens and context.**
+- When a text-only AX node maps onto a better actionable ancestor, the returned `uid` is the actionable target and the match may also include `sourceUid` / `sourceText` for provenance.
 - `mode: "full"`: return the whole `snapshotText`. **Use this only if you do not/cannot find anything helpful via search mode and need to inspect the page structure.** 
 
 #### Query Search Selectors

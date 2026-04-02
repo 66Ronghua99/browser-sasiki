@@ -4,6 +4,8 @@ Browser Sasiki is a browser automation skill for coding agents. It attaches to a
 
 This README is shared by the Sasiki `skill/` directory, which remains the source of truth, and the published mirror repo, so the instructions below are written to work in both places.
 
+For local development from the Sasiki repo, work from `Sasiki/skill`: run `cd skill`, then `npm install`, and `npm test`. Do not keep a second local `browser-sasiki` checkout for development; publish the `skill/` subtree from this repo instead.
+
 ## What It Does
 
 - Starts or reuses a local browser daemon.
@@ -96,6 +98,8 @@ curl -s -X POST "$BASE_URL/query?workspaceRef=workspace_demo" \
 
 `uid` is the only public selector handle for `/query`, `/click`, and `/type`.
 
+In `search` mode, text lookups now prefer the actionable target uid instead of a raw text-only node when the current page exposes a better DOM-backed action target. In `full` mode, snapshot lines can include `interactive=true` for a directly actionable node or `actionableUid=<uid>` when a text node should be routed to an actionable ancestor.
+
 Get the full page snapshot:
 
 ```bash
@@ -139,6 +143,18 @@ curl -s -X POST "$BASE_URL/type?workspaceRef=workspace_demo" \
 - `POST /query`
 - `POST /record-knowledge`
 - `POST /shutdown`
+
+## Local development
+
+If you are contributing from the main Sasiki repo rather than installing the published skill, use:
+
+```bash
+cd skill
+npm install
+npm test
+```
+
+Install from the GitHub repository if you want a standalone copy, but do not keep a second local `browser-sasiki` checkout for development.
 
 ## License
 
