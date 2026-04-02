@@ -2,10 +2,6 @@
 
 Browser Sasiki is a browser automation skill for coding agents. It attaches to an existing Google Chrome session through direct DevTools and exposes a small HTTP API for opening workspaces, inspecting live pages, interacting with elements, and recording reusable page knowledge.
 
-This README is shared by the Sasiki `skill/` directory, which remains the source of truth, and the published mirror repo, so the instructions below are written to work in both places.
-
-For local development from the Sasiki repo, work from `Sasiki/skill`: run `cd skill`, then `npm install`, and `npm test`. Do not keep a second local `browser-sasiki` checkout for development; publish the `skill/` subtree from this repo instead.
-
 ## What It Does
 
 - Starts or reuses a local browser daemon.
@@ -31,7 +27,6 @@ For local development from the Sasiki repo, work from `Sasiki/skill`: run `cd sk
 If your agent can install a skill from a GitHub repository, install `browser-sasiki` from:
 
 - repo: `66Ronghua99/browser-sasiki`
-- path: `.`
 
 Send this to your coding agent:
 
@@ -42,11 +37,11 @@ Please install the `browser-sasiki` skill from the GitHub repo `66Ronghua99/brow
 ### Manual local install for Codex
 
 ```bash
-git clone https://github.com/66Ronghua99/browser-sasiki.git ~/codes/browser-sasiki
+git clone https://github.com/66Ronghua99/browser-sasiki.git ~/browser-sasiki
 mkdir -p ~/.codex/skills
 rm -rf ~/.codex/skills/browser-sasiki
-ln -s ~/codes/browser-sasiki ~/.codex/skills/browser-sasiki
-cd ~/codes/browser-sasiki
+ln -s ~/browser-sasiki ~/.codex/skills/browser-sasiki
+cd ~/browser-sasiki
 npm install
 ```
 
