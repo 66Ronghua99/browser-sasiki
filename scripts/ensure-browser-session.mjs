@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { readFile, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -10,6 +10,8 @@ import { requestJson } from "./http-client.mjs";
 import { assertSessionMetadata } from "./session-metadata.mjs";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 20_000;
+const DEFAULT_LOCK_POLL_INTERVAL_MS = 1_000;
+const DEFAULT_STALE_LOCK_TIMEOUT_MS = 45_000;
 const DEFAULT_RUNTIME_VERSION = "0.1.0";
 const browserSessionCache = new Map();
 
@@ -24,6 +26,8 @@ export async function ensureBrowserSession(options = {}) {
   const runtimeVersion = await resolveRequestedRuntimeVersion(options);
   const now = options.now ?? Date.now;
   const sleepFn = options.sleep ?? sleep;
+  const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
+  const deadline = now() + startupTimeoutMs;
 
   if (options.launchDaemon) {
     const cached = browserSessionCache.get(paths.sessionRoot);
@@ -42,64 +46,63 @@ export async function ensureBrowserSession(options = {}) {
     }
   }
 
-  const existing = await readSessionMetadata(paths.metadataPath);
-
-  if (existing) {
-    if (
-      options.launchDaemon
-      && existing.runtimeVersion === runtimeVersion
-      && isProcessAlive(existing.pid)
-      && (await tryHealthcheck(existing.baseUrl)) !== null
-    ) {
-      browserSessionCache.set(paths.sessionRoot, existing);
-      return existing;
-    }
-
-    const healthy = await tryHealthcheck(existing.baseUrl);
-    if (healthy && healthy.runtimeVersion === runtimeVersion) {
-      if (options.launchDaemon) {
-        browserSessionCache.set(paths.sessionRoot, healthy);
-      }
-      return healthy;
-    }
-
-    if (healthy) {
-      await requestShutdown(existing.baseUrl);
-    }
-
-    await cleanupStaleSession(paths);
-    browserSessionCache.delete(paths.sessionRoot);
-  }
-
-  const launchDaemon = options.launchDaemon ?? defaultLaunchBrowserSessionDaemon;
-  await launchDaemon({
-    env,
-    sessionRoot: paths.sessionRoot,
-    runtimeVersion,
+  const fastHealthy = await readHealthySession(paths, runtimeVersion, {
+    cacheHealthySession: options.launchDaemon === true,
   });
-
-  if (options.launchDaemon) {
-    const launchedMetadata = await readSessionMetadata(paths.metadataPath);
-    if (launchedMetadata) {
-      browserSessionCache.set(paths.sessionRoot, launchedMetadata);
-      return launchedMetadata;
-    }
+  if (fastHealthy) {
+    return fastHealthy;
   }
 
-  const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
-  const deadline = now() + startupTimeoutMs;
   while (now() < deadline) {
-    const metadata = await readSessionMetadata(paths.metadataPath);
-    if (metadata) {
-      const healthy = await tryHealthcheck(metadata.baseUrl);
-      if (healthy) {
-        if (options.launchDaemon) {
-          browserSessionCache.set(paths.sessionRoot, healthy);
-        }
-        return healthy;
+    const lock = await tryAcquireStartupLock(paths, runtimeVersion, now);
+    if (!lock) {
+      const waitingHealthy = await readHealthySession(paths, runtimeVersion, {
+        cacheHealthySession: options.launchDaemon === true,
+      });
+      if (waitingHealthy) {
+        return waitingHealthy;
       }
+
+      const lockState = await readStartupLock(paths.lockPath);
+      if (isStartupLockStale(lockState, now)) {
+        await releaseStartupLock(paths, lockState);
+        continue;
+      }
+
+      await sleepFn(DEFAULT_LOCK_POLL_INTERVAL_MS);
+      continue;
     }
-    await sleepFn(50);
+
+    try {
+      const healthyAfterLock = await readHealthySession(paths, runtimeVersion, {
+        cacheHealthySession: options.launchDaemon === true,
+      });
+      if (healthyAfterLock) {
+        return healthyAfterLock;
+      }
+
+      await cleanupStaleSession(paths);
+      browserSessionCache.delete(paths.sessionRoot);
+
+      const launchDaemon = options.launchDaemon ?? defaultLaunchBrowserSessionDaemon;
+      await launchDaemon({
+        env,
+        sessionRoot: paths.sessionRoot,
+        runtimeVersion,
+      });
+
+      while (now() < deadline) {
+        const healthy = await readHealthySession(paths, runtimeVersion, {
+          cacheHealthySession: options.launchDaemon === true,
+        });
+        if (healthy) {
+          return healthy;
+        }
+        await sleepFn(DEFAULT_LOCK_POLL_INTERVAL_MS);
+      }
+    } finally {
+      await releaseStartupLock(paths, lock);
+    }
   }
 
   throw new Error(
@@ -207,6 +210,7 @@ function resolveSessionPaths(sessionRootOverride) {
   return {
     sessionRoot,
     metadataPath: path.join(sessionRoot, "session.json"),
+    lockPath: path.join(sessionRoot, "startup.lock"),
   };
 }
 
@@ -241,6 +245,107 @@ async function cleanupStaleSession(paths) {
   await rm(paths.metadataPath, { force: true }).catch(() => {});
 }
 
+async function readHealthySession(paths, runtimeVersion, options = {}) {
+  const existing = await readSessionMetadata(paths.metadataPath);
+  if (!existing) {
+    return null;
+  }
+
+  const healthy = await tryHealthcheck(existing.baseUrl);
+  if (healthy && healthy.runtimeVersion === runtimeVersion) {
+    if (options.cacheHealthySession) {
+      browserSessionCache.set(paths.sessionRoot, healthy);
+    }
+    return healthy;
+  }
+
+  if (healthy) {
+    await requestShutdown(existing.baseUrl);
+  }
+
+  return null;
+}
+
+async function tryAcquireStartupLock(paths, runtimeVersion, now) {
+  await mkdir(paths.sessionRoot, { recursive: true });
+  const lock = {
+    pid: process.pid,
+    startedAt: new Date(now()).toISOString(),
+    hostname: os.hostname(),
+    sessionRoot: paths.sessionRoot,
+    runtimeVersion,
+  };
+
+  try {
+    await writeFile(paths.lockPath, `${JSON.stringify(lock, null, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+    });
+    return lock;
+  } catch (error) {
+    if (isAlreadyExistsError(error)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function readStartupLock(lockPath) {
+  try {
+    const raw = JSON.parse(await readFile(lockPath, "utf8"));
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      return null;
+    }
+    return raw;
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return null;
+    }
+    return null;
+  }
+}
+
+function isStartupLockStale(lock, now) {
+  if (!lock || typeof lock !== "object") {
+    return false;
+  }
+
+  if (!Number.isInteger(lock.pid) || lock.pid <= 0) {
+    return true;
+  }
+
+  if (!isProcessAlive(lock.pid)) {
+    return true;
+  }
+
+  if (typeof lock.startedAt !== "string") {
+    return false;
+  }
+
+  const startedAtMs = Date.parse(lock.startedAt);
+  if (!Number.isFinite(startedAtMs)) {
+    return false;
+  }
+
+  return now() - startedAtMs >= DEFAULT_STALE_LOCK_TIMEOUT_MS;
+}
+
+async function releaseStartupLock(paths, lock) {
+  if (!lock) {
+    return;
+  }
+
+  const current = await readStartupLock(paths.lockPath);
+  if (
+    current
+    && current.pid === lock.pid
+    && current.startedAt === lock.startedAt
+    && current.sessionRoot === lock.sessionRoot
+  ) {
+    await rm(paths.lockPath, { force: true }).catch(() => {});
+  }
+}
+
 async function requestShutdown(baseUrl) {
   try {
     await requestJson("POST", new URL("/shutdown", baseUrl).href, {});
@@ -255,12 +360,22 @@ async function resolveRequestedRuntimeVersion(options) {
   }
 
   try {
-    const daemonEntry = resolveBrowserSessionDaemonEntry();
-    const entryStat = await stat(daemonEntry.entryPath);
-    return `${DEFAULT_RUNTIME_VERSION}+${Math.trunc(entryStat.mtimeMs)}`;
+    const packageJsonPath = resolvePackageJsonPath();
+    const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
+    if (typeof packageJson.version === "string" && packageJson.version.length > 0) {
+      return packageJson.version;
+    }
+    return DEFAULT_RUNTIME_VERSION;
   } catch {
     return DEFAULT_RUNTIME_VERSION;
   }
+}
+
+function resolvePackageJsonPath() {
+  const thisFile = fileURLToPath(import.meta.url);
+  const runtimeDir = path.dirname(thisFile);
+  const packageRoot = path.resolve(runtimeDir, "..");
+  return path.join(packageRoot, "package.json");
 }
 
 function sanitizeEnv(env) {
@@ -275,6 +390,10 @@ function sanitizeEnv(env) {
 
 function isMissingFileError(error) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+function isAlreadyExistsError(error) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
 }
 
 function isProcessAlive(pid) {

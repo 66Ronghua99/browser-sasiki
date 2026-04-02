@@ -13,6 +13,7 @@ import {
   ensureBrowserSession,
   runEnsureBrowserSessionCli,
 } from "../../scripts/ensure-browser-session.mjs";
+import packageJson from "../../package.json" with { type: "json" };
 
 const sessionMetadata = {
   pid: 12345,
@@ -155,6 +156,73 @@ test("ensure-browser-session tolerates slow daemon cold starts before reporting 
   }
 });
 
+test("ensure-browser-session serializes concurrent startup attempts behind one startup owner", async () => {
+  const root = await mkdtemp(path.join("/tmp", "browser-session-concurrent-startup-"));
+  const sessionRoot = path.join(root, "session");
+  await mkdir(sessionRoot, { recursive: true });
+
+  let fakeNow = 0;
+  let server = null;
+  let launches = 0;
+
+  const options = {
+    env: {},
+    sessionRoot,
+    runtimeVersion: "0.1.0-test",
+    startupTimeoutMs: 10_000,
+    now: () => fakeNow,
+    sleep: async (ms) => {
+      fakeNow += Math.max(ms, 1_000);
+      await Promise.resolve();
+    },
+    launchDaemon: async () => {
+      launches += 1;
+      if (launches > 1) {
+        throw new Error("launchDaemon should only be called once");
+      }
+
+      server = createServer((req, res) => {
+        const url = new URL(req.url ?? "/", "http://127.0.0.1");
+        if (url.pathname === "/health") {
+          return writeJson(res, 200, {
+            ...sessionMetadataResponse(server.address().port, process.pid),
+            ok: true,
+          });
+        }
+        if (url.pathname === "/shutdown") {
+          return writeJson(res, 200, { ok: true });
+        }
+        return writeJson(res, 404, { ok: false });
+      });
+
+      await new Promise((resolve) => {
+        server.listen(0, "127.0.0.1", resolve);
+      });
+
+      await writeFile(
+        path.join(sessionRoot, "session.json"),
+        `${JSON.stringify(sessionMetadataResponse(server.address().port, process.pid), null, 2)}\n`,
+        "utf8",
+      );
+    },
+  };
+
+  try {
+    const [first, second] = await Promise.all([
+      ensureBrowserSession(options),
+      ensureBrowserSession(options),
+    ]);
+
+    assert.equal(launches, 1);
+    assert.equal(first.baseUrl, second.baseUrl);
+    assert.equal(first.runtimeVersion, "0.1.0-test");
+    assert.equal(second.runtimeVersion, "0.1.0-test");
+  } finally {
+    await new Promise((resolve) => server?.close(resolve) ?? resolve());
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("ensure-browser-session CLI only accepts startup options and delegates to ensureBrowserSession", async () => {
   const calls = [];
   const result = await runEnsureBrowserSessionCli(
@@ -185,6 +253,39 @@ test("ensure-browser-session CLI only accepts startup options and delegates to e
       ),
     /does not accept positional commands|HTTP/i,
   );
+});
+
+test("ensure-browser-session defaults runtimeVersion from package.json version", async () => {
+  const root = await mkdtemp(path.join("/tmp", "browser-session-package-version-"));
+  const sessionRoot = path.join(root, "session");
+  await mkdir(sessionRoot, { recursive: true });
+
+  let launchedRuntimeVersion = null;
+  let fakeNow = 0;
+
+  try {
+    await assert.rejects(
+      () =>
+        ensureBrowserSession({
+          env: {},
+          sessionRoot,
+          startupTimeoutMs: 2_000,
+          launchDaemon: async ({ runtimeVersion }) => {
+            launchedRuntimeVersion = runtimeVersion;
+          },
+          now: () => fakeNow,
+          sleep: async (ms) => {
+            fakeNow += Math.max(ms, 1_000);
+          },
+        }),
+      /Timed out waiting/,
+    );
+
+    assert.equal(launchedRuntimeVersion, packageJson.version);
+    assert.match(launchedRuntimeVersion, /^\d+\.\d+\.\d+$/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 async function createEnsureBrowserSessionHarness() {
