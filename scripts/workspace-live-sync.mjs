@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import { appendBrowserDebugLog } from "./browser-debug-log.mjs";
 import { pageIdentityFromUrl } from "./page-identity.mjs";
 
 export async function preSyncWorkspace(input, options = {}) {
@@ -122,19 +121,6 @@ export async function postSyncWorkspace(input, options = {}) {
     ?? (unboundOpenerLinkedTargets.length === 1 ? unboundOpenerLinkedTargets[0] : undefined)
     ?? (openerLinkedTargets.length === 1 ? openerLinkedTargets[0] : undefined);
   let adoptedWorkspaceTab;
-  await appendBrowserDebugLog("workspace-post-sync:candidates", {
-    workspaceRef: input.workspaceRef,
-    actionTarget: input.actionTarget,
-    activeTargetId: input.activeTargetId,
-    preSyncPages: input.preSyncPages,
-    postSyncPages: input.postSyncPages,
-    newTargets,
-    unboundLiveTargets,
-    openerLinkedTargets,
-    unboundOpenerLinkedTargets,
-    adoptedByActiveTarget,
-    adoptedCandidate,
-  });
 
   if (adoptedCandidate) {
     const adoptedPage = adoptedCandidate;

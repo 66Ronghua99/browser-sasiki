@@ -8,6 +8,56 @@ import { chromium } from "playwright-core";
 
 const DEFAULT_BROWSER_URL = "http://127.0.0.1:9222";
 const DEFAULT_WORKSPACE_TAB_URL = "chrome://newtab/";
+const INTERACTIVE_AX_ROLES = new Set([
+  "button",
+  "checkbox",
+  "combobox",
+  "link",
+  "menuitem",
+  "menuitemcheckbox",
+  "menuitemradio",
+  "option",
+  "radio",
+  "searchbox",
+  "slider",
+  "spinbutton",
+  "switch",
+  "tab",
+  "textbox",
+]);
+const INTERACTIVE_DOM_ROLES = new Set([
+  "button",
+  "checkbox",
+  "combobox",
+  "link",
+  "menuitem",
+  "menuitemcheckbox",
+  "menuitemradio",
+  "option",
+  "radio",
+  "searchbox",
+  "slider",
+  "spinbutton",
+  "switch",
+  "tab",
+  "textbox",
+]);
+const INTERACTIVE_LISTENER_TYPES = new Set([
+  "click",
+  "dblclick",
+  "mousedown",
+  "mouseup",
+  "pointerdown",
+  "pointerup",
+  "touchstart",
+  "touchend",
+  "keydown",
+  "keyup",
+  "keypress",
+  "input",
+  "change",
+  "submit",
+]);
 
 export class DevtoolsBrowserClient {
   constructor(browser, options = {}) {
@@ -22,7 +72,15 @@ export class DevtoolsBrowserClient {
   }
 
   async listPages() {
-    return formatPageInventory(await this.listLivePages(), await this.readActivePageId());
+    const inventory = await this.listLivePageInventory();
+    return formatPageInventory(
+      inventory.map((page) => ({
+        pageId: page.pageId,
+        url: page.url,
+        title: page.title,
+      })),
+      await this.readActivePageId(),
+    );
   }
 
   async listLivePages() {
@@ -41,8 +99,8 @@ export class DevtoolsBrowserClient {
     return Promise.all(
       pages.map(async (page, pageId) => {
         const pageInfo = await this.readPageTargetInfo(page);
-        const title = await readPageTitle(page);
-        const url = readPageUrl(page);
+        const url = pageInfo.url || readPageUrl(page);
+        const title = pageInfo.title || await readPageTitleSafely(page, url);
         return {
           pageId,
           targetId: pageInfo.targetId,
@@ -256,59 +314,55 @@ export class DevtoolsBrowserClient {
   async captureAccessibilitySnapshot(page, pageId) {
     const title = await readPageTitle(page);
     const url = readPageUrl(page);
-    const nodes = await this.readFullAXTree(page);
-    const normalizedNodes = normalizeAXNodes(nodes);
-    const rootNode = selectRootAXNode(normalizedNodes) ?? createFallbackRootNode(title);
-    const handles = new Map();
-    const lines = [
-      "## Latest page snapshot",
-      formatAXSnapshotLine(rootNode, 0, {
-        title,
-        url,
-      }),
-    ];
-
-    const rendered = new Set([rootNode.nodeId]);
-    const appendChildren = (node, depth) => {
-      for (const childId of node.childIds) {
-        const child = normalizedNodes.get(childId);
-        if (!child || rendered.has(child.nodeId)) {
-          continue;
-        }
-        rendered.add(child.nodeId);
-        if (shouldRenderAXNode(child)) {
-          lines.push(formatAXSnapshotLine(child, depth));
-          if (child.backendDOMNodeId !== null) {
-            handles.set(child.nodeId, {
-              backendDOMNodeId: child.backendDOMNodeId,
-            });
-          }
-          appendChildren(child, depth + 1);
-          continue;
-        }
-        appendChildren(child, depth);
-      }
-    };
-
-    appendChildren(rootNode, 1);
-    if (rootNode.backendDOMNodeId !== null) {
-      handles.set(rootNode.nodeId, {
-        backendDOMNodeId: rootNode.backendDOMNodeId,
-      });
-    }
-
-    return {
-      snapshotText: lines.join("\n"),
-      handles,
-      pageId,
-    };
-  }
-
-  async readFullAXTree(page) {
     return this.withPageSession(page, async (session) => {
       await session.send("Accessibility.enable");
       const result = await session.send("Accessibility.getFullAXTree");
-      return Array.isArray(result?.nodes) ? result.nodes : [];
+      const nodes = Array.isArray(result?.nodes) ? result.nodes : [];
+      const normalizedNodes = normalizeAXNodes(nodes);
+      await enrichAXNodesWithDom(session, normalizedNodes);
+      const rootNode = selectRootAXNode(normalizedNodes) ?? createFallbackRootNode(title);
+      const handles = new Map();
+      const lines = [
+        "## Latest page snapshot",
+        formatAXSnapshotLine(rootNode, 0, {
+          title,
+          url,
+        }),
+      ];
+
+      const rendered = new Set([rootNode.nodeId]);
+      const appendChildren = (node, depth) => {
+        for (const childId of node.childIds) {
+          const child = normalizedNodes.get(childId);
+          if (!child || rendered.has(child.nodeId)) {
+            continue;
+          }
+          rendered.add(child.nodeId);
+          if (shouldRenderAXNode(child)) {
+            lines.push(formatAXSnapshotLine(child, depth));
+            if (child.backendDOMNodeId !== null) {
+              handles.set(child.nodeId, {
+                backendDOMNodeId: child.backendDOMNodeId,
+              });
+            }
+            appendChildren(child, depth + 1);
+            continue;
+          }
+          appendChildren(child, depth);
+        }
+      };
+
+      appendChildren(rootNode, 1);
+      if (rootNode.backendDOMNodeId !== null) {
+        handles.set(rootNode.nodeId, {
+          backendDOMNodeId: rootNode.backendDOMNodeId,
+        });
+      }
+      return {
+        snapshotText: lines.join("\n"),
+        handles,
+        pageId,
+      };
     });
   }
 
@@ -339,10 +393,7 @@ export class DevtoolsBrowserClient {
 
   async callNodeFunction(page, backendDOMNodeId, functionDeclaration, argumentsList = []) {
     await this.withPageSession(page, async (session) => {
-      const resolved = await session.send("DOM.resolveNode", {
-        backendNodeId: backendDOMNodeId,
-      });
-      const objectId = resolved?.object?.objectId;
+      const objectId = await resolveNodeObjectId(session, backendDOMNodeId);
       if (!objectId) {
         throw new Error(`Unable to resolve backendDOMNodeId ${backendDOMNodeId}`);
       }
@@ -398,16 +449,20 @@ export class DevtoolsBrowserClient {
     }
 
     try {
-      const state = await page.evaluate(() => ({
-        hasFocus: document.hasFocus(),
-        visibilityState: document.visibilityState,
-        hidden: document.hidden,
-      }));
-      return {
+      const state = await readPageActivitySafely(page);
+      if (!state || typeof state !== "object") {
+        return {
+          hasFocus: false,
+          visibilityState: "",
+          hidden: true,
+        };
+      }
+      const activity = {
         hasFocus: state?.hasFocus === true,
         visibilityState: typeof state?.visibilityState === "string" ? state.visibilityState : "",
         hidden: state?.hidden !== false,
       };
+      return activity;
     } catch {
       return {
         hasFocus: false,
@@ -502,6 +557,28 @@ async function readPageTitle(page) {
     return title;
   }
   return readPageUrl(page);
+}
+
+async function readPageTitleSafely(page, fallbackTitle) {
+  try {
+    return await Promise.race([
+      readPageTitle(page),
+      new Promise((resolve) => setTimeout(() => resolve(fallbackTitle), 25)),
+    ]);
+  } catch {
+    return fallbackTitle;
+  }
+}
+
+async function readPageActivitySafely(page) {
+  return Promise.race([
+    page.evaluate(() => ({
+      hasFocus: document.hasFocus(),
+      visibilityState: document.visibilityState,
+      hidden: document.hidden,
+    })),
+    new Promise((resolve) => setTimeout(() => resolve(null), 25)),
+  ]);
 }
 
 function readPageUrl(page) {
@@ -610,6 +687,28 @@ function(value) {
 }
 `;
 
+const INSPECT_INTERACTION_FUNCTION_DECLARATION = String.raw`
+function() {
+  const computedStyle = typeof getComputedStyle === "function" ? getComputedStyle(this) : null;
+  const tagName = typeof this.tagName === "string" ? this.tagName.toLowerCase() : "";
+  const role = typeof this.getAttribute === "function" ? (this.getAttribute("role") || "").trim().toLowerCase() : "";
+  const href = typeof this.getAttribute === "function" ? this.getAttribute("href") : "";
+  const inputType = tagName === "input" && typeof this.type === "string" ? this.type.toLowerCase() : "";
+  return {
+    tagName,
+    role,
+    tabIndex: typeof this.tabIndex === "number" ? this.tabIndex : -1,
+    disabled: this.matches?.(":disabled") === true || this.disabled === true,
+    readOnly: this.readOnly === true,
+    isContentEditable: this.isContentEditable === true,
+    hasHref: typeof href === "string" && href.trim().length > 0,
+    inputType,
+    cursor: computedStyle?.cursor || "",
+    pointerEvents: computedStyle?.pointerEvents || "",
+  };
+}
+`;
+
 function normalizeAXNodes(nodes) {
   const map = new Map();
   for (const node of nodes) {
@@ -626,8 +725,20 @@ function normalizeAXNodes(nodes) {
       parentId: typeof node?.parentId === "string" ? node.parentId : null,
       childIds: Array.isArray(node?.childIds) ? node.childIds.filter((value) => typeof value === "string") : [],
       backendDOMNodeId: Number.isInteger(node?.backendDOMNodeId) ? node.backendDOMNodeId : null,
+      interactive: false,
+      actionableUid: null,
     });
   }
+
+  for (const node of map.values()) {
+    for (const childId of node.childIds) {
+      const child = map.get(childId);
+      if (child && !child.parentId) {
+        child.parentId = node.nodeId;
+      }
+    }
+  }
+
   return map;
 }
 
@@ -669,9 +780,17 @@ function formatAXSnapshotLine(node, depth, options = {}) {
   const label = depth === 0
     ? requireNonEmptyString(options.title ?? node.name ?? readFallbackLabel(node), "title")
     : node.name || readFallbackLabel(node);
-  const suffix = depth === 0
-    ? ` url=${JSON.stringify(options.url ?? "about:blank")}`
-    : "";
+  const suffixTokens = [];
+  if (depth === 0) {
+    suffixTokens.push(`url=${JSON.stringify(options.url ?? "about:blank")}`);
+  }
+  if (node.interactive === true) {
+    suffixTokens.push("interactive=true");
+  }
+  if (typeof node.actionableUid === "string" && node.actionableUid.trim().length > 0) {
+    suffixTokens.push(`actionableUid=${node.actionableUid}`);
+  }
+  const suffix = suffixTokens.length > 0 ? ` ${suffixTokens.join(" ")}` : "";
   return `${indent}uid=${node.nodeId} ${role}${label ? ` ${JSON.stringify(label)}` : ""}${suffix}`;
 }
 
@@ -684,6 +803,160 @@ function readFallbackLabel(node) {
 
 function readAXValue(value) {
   return typeof value?.value === "string" ? value.value.trim() : "";
+}
+
+async function enrichAXNodesWithDom(session, nodes) {
+  for (const node of nodes.values()) {
+    node.interactive = await isNodeInteractive(session, node);
+  }
+
+  for (const node of nodes.values()) {
+    if (node.interactive) {
+      continue;
+    }
+    node.actionableUid = findNearestActionableAncestorUid(nodes, node);
+  }
+}
+
+async function isNodeInteractive(session, node) {
+  if (node.backendDOMNodeId === null) {
+    return false;
+  }
+
+  const domMetadata = await inspectDomInteractionMetadata(session, node.backendDOMNodeId);
+  if (domMetadata.disabled === true || domMetadata.pointerEvents === "none") {
+    return false;
+  }
+
+  if (INTERACTIVE_AX_ROLES.has(normalizeRole(node.role))) {
+    return true;
+  }
+  if (INTERACTIVE_DOM_ROLES.has(normalizeRole(domMetadata.role))) {
+    return true;
+  }
+  if (isNaturallyInteractiveTag(domMetadata)) {
+    return true;
+  }
+  if (domMetadata.isContentEditable === true) {
+    return true;
+  }
+  if (typeof domMetadata.tabIndex === "number" && domMetadata.tabIndex >= 0) {
+    return true;
+  }
+  if (hasInteractiveListener(domMetadata.listeners)) {
+    return true;
+  }
+  if (domMetadata.cursor === "pointer") {
+    return true;
+  }
+
+  return false;
+}
+
+function findNearestActionableAncestorUid(nodes, node) {
+  let currentParentId = node.parentId;
+  while (typeof currentParentId === "string" && currentParentId.length > 0) {
+    const parent = nodes.get(currentParentId);
+    if (!parent) {
+      return null;
+    }
+    if (parent.interactive === true) {
+      return parent.nodeId;
+    }
+    currentParentId = parent.parentId;
+  }
+  return null;
+}
+
+async function inspectDomInteractionMetadata(session, backendDOMNodeId) {
+  try {
+    const objectId = await resolveNodeObjectId(session, backendDOMNodeId);
+    if (!objectId) {
+      return emptyDomInteractionMetadata();
+    }
+
+    const [listenerResult, domResult] = await Promise.all([
+      session.send("DOMDebugger.getEventListeners", {
+        objectId,
+      }).catch(() => ({ listeners: [] })),
+      session.send("Runtime.callFunctionOn", {
+        objectId,
+        functionDeclaration: INSPECT_INTERACTION_FUNCTION_DECLARATION,
+        returnByValue: true,
+        awaitPromise: true,
+      }).catch(() => ({ result: { value: {} } })),
+    ]);
+
+    return sanitizeDomInteractionMetadata(
+      domResult?.result?.value,
+      Array.isArray(listenerResult?.listeners) ? listenerResult.listeners : [],
+    );
+  } catch {
+    return emptyDomInteractionMetadata();
+  }
+}
+
+async function resolveNodeObjectId(session, backendDOMNodeId) {
+  const resolved = await session.send("DOM.resolveNode", {
+    backendNodeId: backendDOMNodeId,
+  });
+  return resolved?.object?.objectId;
+}
+
+function sanitizeDomInteractionMetadata(value, listeners) {
+  return {
+    ...emptyDomInteractionMetadata(),
+    tagName: typeof value?.tagName === "string" ? value.tagName.trim().toLowerCase() : "",
+    role: typeof value?.role === "string" ? value.role.trim().toLowerCase() : "",
+    tabIndex: typeof value?.tabIndex === "number" ? value.tabIndex : -1,
+    disabled: value?.disabled === true,
+    readOnly: value?.readOnly === true,
+    isContentEditable: value?.isContentEditable === true,
+    hasHref: value?.hasHref === true,
+    inputType: typeof value?.inputType === "string" ? value.inputType.trim().toLowerCase() : "",
+    cursor: typeof value?.cursor === "string" ? value.cursor.trim().toLowerCase() : "",
+    pointerEvents: typeof value?.pointerEvents === "string" ? value.pointerEvents.trim().toLowerCase() : "",
+    listeners: listeners
+      .map((listener) => (typeof listener?.type === "string" ? listener.type.trim().toLowerCase() : ""))
+      .filter((type) => type.length > 0),
+  };
+}
+
+function emptyDomInteractionMetadata() {
+  return {
+    tagName: "",
+    role: "",
+    tabIndex: -1,
+    disabled: false,
+    readOnly: false,
+    isContentEditable: false,
+    hasHref: false,
+    inputType: "",
+    cursor: "",
+    pointerEvents: "",
+    listeners: [],
+  };
+}
+
+function normalizeRole(value) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function isNaturallyInteractiveTag(domMetadata) {
+  if (domMetadata.tagName === "a" && domMetadata.hasHref) {
+    return true;
+  }
+  if (domMetadata.tagName === "button" || domMetadata.tagName === "select" || domMetadata.tagName === "textarea" || domMetadata.tagName === "summary" || domMetadata.tagName === "option") {
+    return true;
+  }
+  if (domMetadata.tagName === "input" && domMetadata.inputType !== "hidden") {
+    return true;
+  }
+  return false;
+}
+
+function hasInteractiveListener(listeners) {
+  return listeners.some((type) => INTERACTIVE_LISTENER_TYPES.has(type));
 }
 
 function detectDevtoolsActivePortBrowserUrl(env, options = {}) {

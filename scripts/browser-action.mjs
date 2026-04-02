@@ -3,7 +3,6 @@ import path from "node:path";
 import process from "node:process";
 
 import { createConnectedDevtoolsBrowserClient } from "./devtools-browser-client.mjs";
-import { appendBrowserDebugLog } from "./browser-debug-log.mjs";
 import { KnowledgeStore } from "./knowledge-store.mjs";
 import { defaultRuntimeRoots } from "./paths.mjs";
 import { pageIdentityFromSnapshotText, pageIdentityFromUrl } from "./page-identity.mjs";
@@ -108,7 +107,6 @@ export async function openWorkspaceFlow(args, deps) {
   });
 
   const knowledgeHits = await readKnowledgeHits(deps, page.origin, page.normalizedPath);
-
   return {
     ok: true,
     workspaceRef,
@@ -145,13 +143,6 @@ async function runWorkspaceTransaction(input, deps) {
   const workspaceRef = requireNonEmptyString(input.workspaceRef, "workspaceRef");
   const workspaceState = resolveWorkspaceState(deps);
   const preSyncPages = await readLivePageInventory(deps.browser);
-  await appendBrowserDebugLog("workspace-transaction:start", {
-    workspaceRef,
-    action: input.action ?? "refresh",
-    workspaceTabRef: input.workspaceTabRef,
-    toolName: input.toolName,
-    preSyncPages,
-  });
   const preSync = await preSyncWorkspace({
     workspaceRef,
     requestedWorkspaceTabRef: input.workspaceTabRef,
@@ -163,13 +154,6 @@ async function runWorkspaceTransaction(input, deps) {
     : input.createWorkspaceIfMissing === true
       ? await openNewWorkspaceTransactionTarget(deps.browser)
       : resolveExecutionTarget(preSync, workspaceRef, input.workspaceTabRef);
-  await appendBrowserDebugLog("workspace-transaction:resolved-target", {
-    workspaceRef,
-    action: input.action ?? "refresh",
-    actionTarget,
-    workspace: preSync.workspace,
-  });
-
   let postSyncPages = actionTarget.postSyncPages;
   let captureTarget = actionTarget;
   let activeTargetId;
@@ -178,13 +162,6 @@ async function runWorkspaceTransaction(input, deps) {
     await deps.browser.callBrowserTool(input.toolName, {
       ...input.toolArgs,
       pageId: actionTarget.browserTabIndex,
-    });
-    await appendBrowserDebugLog("workspace-transaction:tool-complete", {
-      workspaceRef,
-      action: input.action ?? "refresh",
-      toolName: input.toolName,
-      actionTarget,
-      toolArgs: input.toolArgs,
     });
   }
 
@@ -202,15 +179,6 @@ async function runWorkspaceTransaction(input, deps) {
       postSyncPages,
       actionTarget,
       activeTargetId,
-    });
-    await appendBrowserDebugLog("workspace-transaction:post-sync", {
-      workspaceRef,
-      action: input.action ?? "refresh",
-      actionTarget,
-      activeTargetId,
-      postSyncPages,
-      adoptedWorkspaceTab: postSync.adoptedWorkspaceTab,
-      workspace: postSync.workspace,
     });
     captureTarget = resolveExecutionTarget(
       postSync,
@@ -245,14 +213,6 @@ async function runWorkspaceTransaction(input, deps) {
   });
 
   const knowledgeHits = await readKnowledgeHits(deps, page.origin, page.normalizedPath);
-  await appendBrowserDebugLog("workspace-transaction:complete", {
-    workspaceRef,
-    action: input.action ?? "refresh",
-    captureTarget,
-    page,
-    snapshotPath,
-  });
-
   return {
     workspaceRef,
     workspaceTabRef: actionTarget.createdWorkspace ? undefined : workspaceStateResult.workspace.activeWorkspaceTabRef,
@@ -642,13 +602,6 @@ async function waitForPostActionBrowserState(input) {
   const shouldPoll = input.shouldReadActiveTab === true;
   let postSyncPages = await readLivePageInventory(input.browser);
   let activeTargetId = await resolveActiveTargetIdForPostSync(input.browser, postSyncPages, shouldPoll);
-  await appendBrowserDebugLog("workspace-transaction:post-action-observe", {
-    attempt: 0,
-    actionTarget: input.actionTarget,
-    preSyncPages: input.preSyncPages,
-    postSyncPages,
-    activeTargetId,
-  });
 
   if (hasObservableBrowserChange({
     preSyncPages: input.preSyncPages,
@@ -666,13 +619,6 @@ async function waitForPostActionBrowserState(input) {
     await sleep(150);
     postSyncPages = await readLivePageInventory(input.browser);
     activeTargetId = await resolveActiveTargetIdForPostSync(input.browser, postSyncPages, shouldPoll);
-    await appendBrowserDebugLog("workspace-transaction:post-action-observe", {
-      attempt: attempt + 1,
-      actionTarget: input.actionTarget,
-      preSyncPages: input.preSyncPages,
-      postSyncPages,
-      activeTargetId,
-    });
     if (hasObservableBrowserChange({
       preSyncPages: input.preSyncPages,
       postSyncPages,

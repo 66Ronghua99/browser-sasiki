@@ -147,7 +147,6 @@ export class BrowserSessionDaemon {
   async handleHttpRequest(endpoint, body) {
     this.ensureStarted();
     await this.touch();
-
     if (QUEUED_ENDPOINTS.has(endpoint)) {
       return this.requestQueue.run(endpoint, async () => this.handleQueuedWorkspaceRequest(endpoint, body));
     }

@@ -425,6 +425,128 @@ test("devtools browser client keeps duplicate title/url pages distinct by target
   ]);
 });
 
+test("devtools browser client listLivePageInventory does not block on a page title that never resolves", async () => {
+  const hungPage = createPage({
+    url: "about:blank",
+    title: "",
+    targetInfo: {
+      targetId: "page-hung",
+      type: "page",
+      openerId: "",
+      title: "Recovered From Target Info",
+      url: "https://example.com/hung",
+      attached: true,
+    },
+  });
+  hungPage.title = async () => new Promise(() => {});
+
+  const { browser } = createHarnessBrowser({
+    pages: [hungPage],
+    targetInfos: [
+      {
+        targetId: "page-hung",
+        type: "page",
+        openerId: "",
+        title: "Recovered From Target Info",
+        url: "https://example.com/hung",
+        attached: true,
+      },
+    ],
+  });
+  const client = new DevtoolsBrowserClient(browser);
+
+  const inventory = await Promise.race([
+    client.listLivePageInventory(),
+    new Promise((resolve) => setTimeout(() => resolve("timeout"), 50)),
+  ]);
+
+  assert.notEqual(inventory, "timeout");
+  assert.deepEqual(inventory, [
+    {
+      pageId: 0,
+      targetId: "page-hung",
+      openerId: "",
+      url: "https://example.com/hung",
+      title: "Recovered From Target Info",
+    },
+  ]);
+});
+
+test("devtools browser client listPages does not block on a page title that never resolves", async () => {
+  const hungPage = createPage({
+    url: "about:blank",
+    title: "",
+    targetInfo: {
+      targetId: "page-hung",
+      type: "page",
+      openerId: "",
+      title: "Recovered From Target Info",
+      url: "https://example.com/hung",
+      attached: true,
+    },
+  });
+  hungPage.title = async () => new Promise(() => {});
+
+  const { browser } = createHarnessBrowser({
+    pages: [hungPage],
+    targetInfos: [
+      {
+        targetId: "page-hung",
+        type: "page",
+        openerId: "",
+        title: "Recovered From Target Info",
+        url: "https://example.com/hung",
+        attached: true,
+      },
+    ],
+  });
+  const client = new DevtoolsBrowserClient(browser);
+
+  const pageListText = await Promise.race([
+    client.listPages(),
+    new Promise((resolve) => setTimeout(() => resolve("timeout"), 50)),
+  ]);
+
+  assert.notEqual(pageListText, "timeout");
+  assert.equal(pageListText, "## Pages\n- 0 [Recovered From Target Info](https://example.com/hung)");
+});
+
+test("devtools browser client listPages does not block on page activity that never resolves", async () => {
+  const hungPage = createPage({
+    url: "https://example.com/hung",
+    title: "Hung",
+  });
+  hungPage.evaluate = async () => new Promise(() => {});
+
+  const { browser } = createHarnessBrowser({
+    pages: [
+      hungPage,
+      createPage({
+        url: "https://example.com/visible",
+        title: "Visible",
+        activity: {
+          hasFocus: true,
+          visibilityState: "visible",
+          hidden: false,
+        },
+      }),
+    ],
+    targetInfos: [],
+  });
+  const client = new DevtoolsBrowserClient(browser);
+
+  const pageListText = await Promise.race([
+    client.listPages(),
+    new Promise((resolve) => setTimeout(() => resolve("timeout"), 50)),
+  ]);
+
+  assert.notEqual(pageListText, "timeout");
+  assert.equal(
+    pageListText,
+    "## Pages\n- 0 [Hung](https://example.com/hung)\n- 1 (current) [Visible](https://example.com/visible)",
+  );
+});
+
 test("devtools browser client marks the visible focused page as current in page inventory text", async () => {
   const { browser } = createHarnessBrowser({
     pages: [
@@ -552,13 +674,24 @@ test("devtools browser client captures a queryable accessibility snapshot and re
   await client.press({ pageId: 0, key: "Enter" });
 
   assert.match(snapshot, /uid=1_0 RootWebArea "Compose" url="https:\/\/example.com\/compose"/);
-  assert.match(snapshot, /uid=1_1 button "Compose"/);
-  assert.match(snapshot, /uid=1_2 textbox "Message"/);
+  assert.match(snapshot, /uid=1_1 button "Compose" interactive=true/);
+  assert.match(snapshot, /uid=1_2 textbox "Message" interactive=true/);
   assert.deepEqual(
-    context.cdpCalls.map((call) => call.method),
+    context.cdpCalls.slice(0, 8).map((call) => call.method),
     [
       "Accessibility.enable",
       "Accessibility.getFullAXTree",
+      "DOM.resolveNode",
+      "DOMDebugger.getEventListeners",
+      "Runtime.callFunctionOn",
+      "DOM.resolveNode",
+      "DOMDebugger.getEventListeners",
+      "Runtime.callFunctionOn",
+    ],
+  );
+  assert.deepEqual(
+    context.cdpCalls.slice(-4).map((call) => call.method),
+    [
       "DOM.resolveNode",
       "Runtime.callFunctionOn",
       "DOM.resolveNode",
@@ -567,7 +700,7 @@ test("devtools browser client captures a queryable accessibility snapshot and re
   );
   assert.equal(page.locatorCalls.length, 0);
   assert.deepEqual(
-    context.runtimeFunctionCalls.map((call) => ({
+    context.runtimeFunctionCalls.slice(-2).map((call) => ({
       objectId: call.objectId,
       arguments: call.arguments,
     })),
@@ -586,6 +719,59 @@ test("devtools browser client captures a queryable accessibility snapshot and re
   assert.deepEqual(page.clickCalls, []);
   assert.deepEqual(page.keyboardCalls, ["Enter"]);
   assert.equal(page.bringToFrontCalls, 0);
+});
+
+test("devtools browser client enriches accessibility snapshot lines with actionable metadata", async () => {
+  const page = createPage({
+    url: "https://example.com/inbox",
+    title: "Inbox",
+  });
+  const { browser } = createHarnessBrowser({
+    pages: [page],
+    targetInfos: [],
+    axNodes: [
+      {
+        nodeId: "1_0",
+        role: { value: "RootWebArea" },
+        name: { value: "Inbox" },
+        childIds: ["1_1"],
+      },
+      {
+        nodeId: "1_1",
+        role: { value: "generic" },
+        name: { value: "" },
+        backendDOMNodeId: 101,
+        childIds: ["1_2"],
+      },
+      {
+        nodeId: "1_2",
+        role: { value: "StaticText" },
+        name: { value: "客户消息" },
+      },
+    ],
+    eventListenersByBackendNodeId: {
+      101: [{ type: "click" }],
+    },
+    domNodeDetailsByBackendNodeId: {
+      101: {
+        tagName: "DIV",
+        role: "",
+        tabIndex: -1,
+        disabled: false,
+        readOnly: false,
+        isContentEditable: false,
+        hasHref: false,
+        cursor: "pointer",
+        pointerEvents: "auto",
+      },
+    },
+  });
+  const client = new DevtoolsBrowserClient(browser);
+
+  const snapshot = await client.captureSnapshot();
+
+  assert.match(snapshot, /uid=1_1 generic interactive=true/);
+  assert.match(snapshot, /uid=1_2 StaticText "客户消息" actionableUid=1_1/);
 });
 
 test("devtools browser client browser-tool actions accept uid handles from the latest snapshot", async () => {
@@ -624,10 +810,21 @@ test("devtools browser client browser-tool actions accept uid handles from the l
   await client.callBrowserTool("fill", { uid: "1_2", value: "hello" });
 
   assert.deepEqual(
-    context.cdpCalls.map((call) => call.method),
+    context.cdpCalls.slice(0, 8).map((call) => call.method),
     [
       "Accessibility.enable",
       "Accessibility.getFullAXTree",
+      "DOM.resolveNode",
+      "DOMDebugger.getEventListeners",
+      "Runtime.callFunctionOn",
+      "DOM.resolveNode",
+      "DOMDebugger.getEventListeners",
+      "Runtime.callFunctionOn",
+    ],
+  );
+  assert.deepEqual(
+    context.cdpCalls.slice(-4).map((call) => call.method),
+    [
       "DOM.resolveNode",
       "Runtime.callFunctionOn",
       "DOM.resolveNode",
@@ -696,6 +893,8 @@ function createHarnessBrowser({
   targetInfos,
   axNodes = [],
   nextNewPage = null,
+  eventListenersByBackendNodeId = {},
+  domNodeDetailsByBackendNodeId = {},
 }) {
   const livePages = [...pages];
   const newCDPSessionCalls = [];
@@ -740,8 +939,22 @@ function createHarnessBrowser({
               },
             };
           }
+          if (method === "DOMDebugger.getEventListeners") {
+            const backendNodeId = Number(String(params.objectId ?? "").replace("object-", ""));
+            return {
+              listeners: eventListenersByBackendNodeId[backendNodeId] ?? [],
+            };
+          }
           if (method === "Runtime.callFunctionOn") {
             runtimeFunctionCalls.push(params);
+            if (String(params.functionDeclaration).includes("getComputedStyle")) {
+              const backendNodeId = Number(String(params.objectId ?? "").replace("object-", ""));
+              return {
+                result: {
+                  value: domNodeDetailsByBackendNodeId[backendNodeId] ?? {},
+                },
+              };
+            }
             return {
               result: {
                 value: true,
