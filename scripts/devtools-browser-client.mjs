@@ -64,6 +64,7 @@ export class DevtoolsBrowserClient {
     this.browser = browser;
     this.workspaceTabUrl = options.workspaceTabUrl ?? DEFAULT_WORKSPACE_TAB_URL;
     this.snapshotHandlesByPage = new Map();
+    this.snapshotUidAliasesByPage = new Map();
   }
 
   async captureSnapshot() {
@@ -116,6 +117,7 @@ export class DevtoolsBrowserClient {
     const page = await this.resolvePage({ pageId });
     const snapshot = await this.captureAccessibilitySnapshot(page, pageId);
     this.snapshotHandlesByPage.set(pageId, snapshot.handles);
+    this.snapshotUidAliasesByPage.set(pageId, snapshot.uidAliases);
     return snapshot.snapshotText;
   }
 
@@ -358,9 +360,16 @@ export class DevtoolsBrowserClient {
           backendDOMNodeId: rootNode.backendDOMNodeId,
         });
       }
+      const uidAliases = new Map();
+      for (const node of normalizedNodes.values()) {
+        if (typeof node.actionableUid === "string" && node.actionableUid.trim().length > 0) {
+          uidAliases.set(node.nodeId, node.actionableUid);
+        }
+      }
       return {
         snapshotText: lines.join("\n"),
         handles,
+        uidAliases,
         pageId,
       };
     });
@@ -374,7 +383,8 @@ export class DevtoolsBrowserClient {
 
     const pageId = this.findPageId(page);
     const handles = this.snapshotHandlesByPage.get(pageId);
-    const handle = handles?.get(uid);
+    const resolvedUid = this.resolveSnapshotUidForPage(pageId, uid);
+    const handle = handles?.get(resolvedUid);
     if (!handle) {
       throw new Error(`No live snapshot handle exists for uid ${uid}; re-run /query on the current workspace page.`);
     }
@@ -383,12 +393,37 @@ export class DevtoolsBrowserClient {
 
   findPageIdForSnapshotHandle(uid) {
     for (const [pageId, handles] of this.snapshotHandlesByPage.entries()) {
-      if (handles?.has(uid)) {
+      const resolvedUid = this.resolveSnapshotUidForPage(pageId, uid);
+      if (handles?.has(resolvedUid)) {
         return pageId;
       }
     }
 
     throw new Error(`No live snapshot handle exists for uid ${uid}; re-run /query on the current workspace page.`);
+  }
+
+  resolveSnapshotUidForPage(pageId, uid) {
+    const handles = this.snapshotHandlesByPage.get(pageId);
+    if (handles?.has(uid)) {
+      return uid;
+    }
+
+    const aliases = this.snapshotUidAliasesByPage.get(pageId);
+    let candidateUid = uid;
+    const seen = new Set();
+    while (typeof candidateUid === "string" && candidateUid.length > 0 && !seen.has(candidateUid)) {
+      seen.add(candidateUid);
+      const nextUid = aliases?.get(candidateUid);
+      if (!nextUid) {
+        return candidateUid;
+      }
+      if (handles?.has(nextUid)) {
+        return nextUid;
+      }
+      candidateUid = nextUid;
+    }
+
+    return uid;
   }
 
   async callNodeFunction(page, backendDOMNodeId, functionDeclaration, argumentsList = []) {
@@ -860,7 +895,7 @@ function findNearestActionableAncestorUid(nodes, node) {
     if (!parent) {
       return null;
     }
-    if (parent.interactive === true) {
+    if (parent.interactive === true && shouldRenderAXNode(parent)) {
       return parent.nodeId;
     }
     currentParentId = parent.parentId;

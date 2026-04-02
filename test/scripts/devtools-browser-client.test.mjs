@@ -9,6 +9,7 @@ import {
   createConnectedDevtoolsBrowserClient,
   resolveBrowserDevtoolsUrl,
 } from "../../scripts/devtools-browser-client.mjs";
+import { querySnapshotText } from "../../scripts/knowledge-query.mjs";
 
 test("resolveBrowserDevtoolsUrl defaults to localhost Chrome DevTools when no override is present", () => {
   assert.equal(
@@ -774,6 +775,159 @@ test("devtools browser client enriches accessibility snapshot lines with actiona
   assert.match(snapshot, /uid=1_2 StaticText "客户消息" actionableUid=1_1/);
 });
 
+test("devtools browser client actionable metadata skips hidden interactive ancestors and points to the nearest rendered interactive uid", async () => {
+  const page = createPage({
+    url: "https://example.com/publish",
+    title: "Publish",
+  });
+  const { browser } = createHarnessBrowser({
+    pages: [page],
+    targetInfos: [],
+    axNodes: [
+      {
+        nodeId: "1_0",
+        role: { value: "RootWebArea" },
+        name: { value: "Publish" },
+        childIds: ["1_1"],
+      },
+      {
+        nodeId: "1_1",
+        role: { value: "generic" },
+        name: { value: "" },
+        backendDOMNodeId: 101,
+        childIds: ["1_2"],
+      },
+      {
+        nodeId: "1_2",
+        role: { value: "" },
+        name: { value: "" },
+        backendDOMNodeId: 102,
+        childIds: ["1_3"],
+      },
+      {
+        nodeId: "1_3",
+        role: { value: "StaticText" },
+        name: { value: "上传图文" },
+      },
+    ],
+    eventListenersByBackendNodeId: {
+      101: [{ type: "click" }],
+      102: [{ type: "click" }],
+    },
+    domNodeDetailsByBackendNodeId: {
+      101: {
+        tagName: "DIV",
+        role: "",
+        tabIndex: -1,
+        disabled: false,
+        readOnly: false,
+        isContentEditable: false,
+        hasHref: false,
+        cursor: "pointer",
+        pointerEvents: "auto",
+      },
+      102: {
+        tagName: "DIV",
+        role: "",
+        tabIndex: -1,
+        disabled: false,
+        readOnly: false,
+        isContentEditable: false,
+        hasHref: false,
+        cursor: "pointer",
+        pointerEvents: "auto",
+      },
+    },
+  });
+  const client = new DevtoolsBrowserClient(browser);
+
+  const snapshot = await client.captureSnapshot();
+
+  assert.match(snapshot, /uid=1_1 generic interactive=true/);
+  assert.doesNotMatch(snapshot, /uid=1_2\s/);
+  assert.match(snapshot, /uid=1_3 StaticText "上传图文" actionableUid=1_1/);
+});
+
+test("devtools browser client snapshot output keeps search results aligned to the rendered actionable uid", async () => {
+  const page = createPage({
+    url: "https://example.com/publish",
+    title: "Publish",
+  });
+  const { browser } = createHarnessBrowser({
+    pages: [page],
+    targetInfos: [],
+    axNodes: [
+      {
+        nodeId: "1_0",
+        role: { value: "RootWebArea" },
+        name: { value: "Publish" },
+        childIds: ["1_1"],
+      },
+      {
+        nodeId: "1_1",
+        role: { value: "generic" },
+        name: { value: "" },
+        backendDOMNodeId: 101,
+        childIds: ["1_2"],
+      },
+      {
+        nodeId: "1_2",
+        role: { value: "" },
+        name: { value: "" },
+        backendDOMNodeId: 102,
+        childIds: ["1_3"],
+      },
+      {
+        nodeId: "1_3",
+        role: { value: "StaticText" },
+        name: { value: "上传图文" },
+      },
+    ],
+    eventListenersByBackendNodeId: {
+      101: [{ type: "click" }],
+      102: [{ type: "click" }],
+    },
+    domNodeDetailsByBackendNodeId: {
+      101: {
+        tagName: "DIV",
+        role: "",
+        tabIndex: -1,
+        disabled: false,
+        readOnly: false,
+        isContentEditable: false,
+        hasHref: false,
+        cursor: "pointer",
+        pointerEvents: "auto",
+      },
+      102: {
+        tagName: "DIV",
+        role: "",
+        tabIndex: -1,
+        disabled: false,
+        readOnly: false,
+        isContentEditable: false,
+        hasHref: false,
+        cursor: "pointer",
+        pointerEvents: "auto",
+      },
+    },
+  });
+  const client = new DevtoolsBrowserClient(browser);
+
+  const snapshot = await client.captureSnapshot();
+  const result = querySnapshotText({
+    snapshotText: snapshot,
+    mode: "search",
+    text: "图文",
+  });
+
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].uid, "1_1");
+  assert.equal(result.matches[0].role, "generic");
+  assert.equal(result.matches[0].sourceUid, "1_3");
+  assert.equal(result.matches[0].sourceText, "上传图文");
+});
+
 test("devtools browser client browser-tool actions accept uid handles from the latest snapshot", async () => {
   const page = createPage({
     url: "https://example.com/compose",
@@ -834,6 +988,67 @@ test("devtools browser client browser-tool actions accept uid handles from the l
   assert.equal(page.locatorCalls.length, 0);
   assert.deepEqual(page.clickCalls, []);
   assert.deepEqual(page.fillCalls, []);
+});
+
+test("devtools browser client browser-tool actions resolve static text uids through actionableUid aliases from the latest snapshot", async () => {
+  const page = createPage({
+    url: "https://example.com/inbox",
+    title: "Inbox",
+  });
+  const { browser, context } = createHarnessBrowser({
+    pages: [page],
+    targetInfos: [],
+    axNodes: [
+      {
+        nodeId: "1_0",
+        role: { value: "RootWebArea" },
+        name: { value: "Inbox" },
+        childIds: ["1_1"],
+      },
+      {
+        nodeId: "1_1",
+        role: { value: "generic" },
+        name: { value: "" },
+        backendDOMNodeId: 101,
+        childIds: ["1_2"],
+      },
+      {
+        nodeId: "1_2",
+        role: { value: "StaticText" },
+        name: { value: "上传图文" },
+      },
+    ],
+    eventListenersByBackendNodeId: {
+      101: [{ type: "click" }],
+    },
+    domNodeDetailsByBackendNodeId: {
+      101: {
+        tagName: "DIV",
+        role: "",
+        tabIndex: -1,
+        disabled: false,
+        readOnly: false,
+        isContentEditable: false,
+        hasHref: false,
+        cursor: "pointer",
+        pointerEvents: "auto",
+      },
+    },
+  });
+  const client = new DevtoolsBrowserClient(browser);
+
+  await client.captureSnapshot();
+  await client.callBrowserTool("click", { uid: "1_2" });
+
+  assert.deepEqual(
+    context.cdpCalls.slice(-2).map((call) => call.method),
+    [
+      "DOM.resolveNode",
+      "Runtime.callFunctionOn",
+    ],
+  );
+  assert.equal(page.locatorCalls.length, 0);
+  assert.deepEqual(page.clickCalls, []);
 });
 
 test("devtools browser client explicit selector helpers stay on the resolved page without bringToFront", async () => {
